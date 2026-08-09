@@ -49,14 +49,16 @@ SHARED_LIB := $(BUILD_DIR)/lib$(PROJECT).so
 OBJECTS := $(BUILD_DIR)/kilix_mask.o $(BUILD_DIR)/kilix_mask_rects.o
 
 EDIT_LIB := $(BUILD_DIR)/lib$(PROJECT)-edit.a
-EDIT_OBJECTS := $(BUILD_DIR)/kilix_mask_edit.o
+EDIT_OBJECTS := $(BUILD_DIR)/kilix_mask_edit.o \
+	$(BUILD_DIR)/kilix_mask_image.o
 
 # Pinned upstream code, built with the conversion warnings off: letting
 # their output through would bury ours.
 SR_OBJECT := $(BUILD_DIR)/vendor/soft_raster.o
 VENDOR_CFLAGS := $(CFLAGS) -Wno-conversion -Wno-sign-conversion
 
-TESTS := $(BUILD_DIR)/test-mask $(BUILD_DIR)/test-rects $(BUILD_DIR)/test-edit
+TESTS := $(BUILD_DIR)/test-mask $(BUILD_DIR)/test-rects \
+	$(BUILD_DIR)/test-edit $(BUILD_DIR)/test-image
 
 .PHONY: all test sanitize install clean
 
@@ -82,6 +84,10 @@ $(BUILD_DIR)/kilix_mask_edit.o: src/kilix_mask_edit.c include/kilix_mask_edit.h 
 	@test -f $(SR)/src/soft_raster.c || { \
 		printf 'submodules missing; run: git submodule update --init --recursive\n' >&2; \
 		exit 1; }
+	$(CC) $(CPPFLAGS) $(EDIT_CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/kilix_mask_image.o: src/kilix_mask_image.c \
+		include/kilix_mask_image.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(EDIT_CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 # Not bundled into the archive: a consumer that already links soft-raster
@@ -115,6 +121,11 @@ $(BUILD_DIR)/test-edit: tests/test_edit.c $(EDIT_LIB) $(STATIC_LIB) \
 	$(CC) $(CPPFLAGS) $(EDIT_CPPFLAGS) $(CFLAGS) $(LDFLAGS) $< \
 		$(EDIT_LIB) $(STATIC_LIB) $(SR_OBJECT) $(LDLIBS) $(EDIT_LDLIBS) -o $@
 
+$(BUILD_DIR)/test-image: tests/test_image.c tests/image_fixtures.h \
+		$(EDIT_LIB) $(STATIC_LIB) $(SR_OBJECT) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(EDIT_CPPFLAGS) -Itests $(CFLAGS) $(LDFLAGS) $< \
+		$(EDIT_LIB) $(STATIC_LIB) $(SR_OBJECT) $(LDLIBS) $(EDIT_LDLIBS) -o $@
+
 # The command's own --selftest runs here too.  It duplicates a little of
 # what the suites cover, deliberately: it is the only check that the
 # assembled binary works, and it is what can be run on a machine that has
@@ -137,7 +148,8 @@ sanitize: clean
 install: all
 	$(INSTALL) -d $(DESTDIR)$(PREFIX)/include
 	$(INSTALL) -m 644 include/kilix_mask.h include/kilix_mask_rects.h \
-		include/kilix_mask_edit.h $(DESTDIR)$(PREFIX)/include/
+		include/kilix_mask_edit.h include/kilix_mask_image.h \
+		$(DESTDIR)$(PREFIX)/include/
 	$(INSTALL) -d $(DESTDIR)$(PREFIX)/lib
 	$(INSTALL) -m 644 $(STATIC_LIB) $(EDIT_LIB) $(DESTDIR)$(PREFIX)/lib/
 	$(INSTALL) -m 755 $(SHARED_LIB) $(DESTDIR)$(PREFIX)/lib/

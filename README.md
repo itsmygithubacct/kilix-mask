@@ -242,12 +242,49 @@ assembled binary — create, paint, encode, decode, decompose, apply, compose �
 and is the only check available on a machine that has the program installed but
 not this source tree. `make test` runs it alongside the suites.
 
-Pictures are binary PPM. Decoding arbitrary image formats is not this module's
-job and the error message says so:
+## Reading the picture
 
-```sh
-ffmpeg -i snapshot.jpg -pix_fmt rgb24 plate.ppm
+`kilix_mask_image.h` reads the photograph being painted over — a camera
+snapshot, a room plate. That is a different job from `kmask_load()`, which
+reads a mask *this module wrote* and refuses an ordinary PNG on purpose,
+because the geometry it needs lives in metadata a general encoder would never
+have written.
+
+```c
+sr_canvas plate;
+kmask_image_load(&plate, "room.png");   /* or room.ppm — see below */
 ```
+
+Colour types 0, 2, 3, 4 and 6; bit depths 1 to 16; all five scanline filters;
+`tRNS` transparency. Interlaced files are refused **by name**, so the message
+can say what to convert rather than just "could not read".
+
+It lives here rather than in soft-raster because soft-raster is pure ISO C11
+with libm and nothing else, and says so in its README. A PNG reader needs zlib,
+and a game that only wants to draw triangles should not acquire a compression
+library to do it. This module already links zlib for the mask format.
+
+**The format is chosen by content, not by extension** — a PNG signature picks
+the PNG path, `P6` picks soft-raster's PPM loader. Plates get renamed and
+converted; opening one should not depend on whether the extension survived.
+
+Two things the tests do deliberately:
+
+- **The fixtures are real files** written by an independent encoder, checked
+  against what an independent decoder reads back from them. Round-tripping this
+  module's own output would only prove its two halves agree with each other,
+  which is exactly what lets a reader be confidently wrong about every file it
+  did not write. The one exception is documented in the fixtures: a 16-bit
+  greyscale expectation is computed from the samples, because the reference
+  decoder's RGBA conversion *clips* to 0–255 instead of scaling and so is not a
+  faithful reading of that file.
+- **Every filter is forced in turn.** Encoders choose filters adaptively, so a
+  handful of sample files exercise whichever ones their content happened to
+  favour and quietly leave the rest untested.
+
+A missing `IEND` is tolerated — it carries no pixels, and a photograph that
+opens beats one refused over a missing full stop. Truncation that actually
+loses image data is caught by the inflated size not matching the header.
 
 The terminal side is deliberately thin — read the pointer, place it in the
 frame, hand back pixels — because it is the one part no test reaches. Two

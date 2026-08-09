@@ -12,6 +12,7 @@
 #include "kmask_run.h"
 #include "kmask_ui.h"
 
+#include "kilix_mask_image.h"
 #include "kilix_mask_rects.h"
 
 #include <stdio.h>
@@ -42,7 +43,7 @@ static void usage(FILE *stream)
         "Paint a region map over a picture: which parts of a camera view to\n"
         "ignore, which parts of a room can be walked on.\n"
         "\n"
-        "  --image FILE     picture to paint over, binary PPM\n"
+        "  --image FILE     picture to paint over: PNG or binary PPM\n"
         "  --cell N         source pixels per map cell for a new mask\n"
         "                   (default 1; larger stores a grid)\n"
         "  --size WxH       source size for a new mask with no picture\n"
@@ -53,8 +54,10 @@ static void usage(FILE *stream)
         "An existing mask is loaded and its geometry used; otherwise one is\n"
         "created from the picture's size, or from --size.\n"
         "\n"
-        "PPM because reading arbitrary image formats is not this tool's job:\n"
-        "  ffmpeg -i snapshot.jpg -pix_fmt rgb24 plate.ppm\n");
+        "The picture's format is chosen by what the file contains, not by\n"
+        "what it is called.  Interlaced PNG is the one valid file refused;\n"
+        "convert it first:\n"
+        "  ffmpeg -i snapshot.jpg plate.png\n");
 }
 
 static bool parse_size(const char *text, int *width, int *height)
@@ -322,11 +325,17 @@ int main(int argc, char **argv)
         return selftest();
     }
     if (options.image_path != NULL) {
-        if (!sr_load_ppm(&plate, options.image_path)) {
-            (void)fprintf(stderr,
-                          "kilix-mask: could not read %s as a binary PPM\n"
-                          "  ffmpeg -i %s -pix_fmt rgb24 plate.ppm\n",
-                          options.image_path, options.image_path);
+        if (!kmask_image_load(&plate, options.image_path)) {
+            const char *reason = kmask_image_error();
+
+            (void)fprintf(stderr, "kilix-mask: %s: %s\n", options.image_path,
+                          reason != NULL ? reason : "could not be read");
+            /* Interlacing is the one thing a valid PNG can be that this
+             * will not read, so name the way out of it. */
+            if (reason != NULL && strstr(reason, "interlac") != NULL) {
+                (void)fprintf(stderr, "  ffmpeg -i %s plate.ppm\n",
+                              options.image_path);
+            }
             return 1;
         }
         image = &plate;
