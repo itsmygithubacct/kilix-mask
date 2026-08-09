@@ -30,6 +30,7 @@ typedef struct arguments {
     int cell;
     int width;
     int height;
+    int rect_cap;
     bool selftest;
     bool help;
 } arguments;
@@ -47,6 +48,8 @@ static void usage(FILE *stream)
         "  --cell N         source pixels per map cell for a new mask\n"
         "                   (default 1; larger stores a grid)\n"
         "  --size WxH       source size for a new mask with no picture\n"
+        "  --cap N          obstacle budget: the decomposition count is\n"
+        "                   flagged past it (land-desktop caps a room at 64)\n"
         "  --render FILE    compose one frame to a PPM and exit\n"
         "  --selftest       check this build end to end and exit\n"
         "  --help\n"
@@ -100,6 +103,12 @@ static bool parse_arguments(int argc, char **argv, arguments *out)
             out->cell = atoi(argv[++i]);
             if (out->cell < 1) {
                 (void)fprintf(stderr, "kilix-mask: --cell must be at least 1\n");
+                return false;
+            }
+        } else if (strcmp(argument, "--cap") == 0 && has_value) {
+            out->rect_cap = atoi(argv[++i]);
+            if (out->rect_cap < 0) {
+                (void)fprintf(stderr, "kilix-mask: --cap cannot be negative\n");
                 return false;
             }
         } else if (strcmp(argument, "--size") == 0 && has_value) {
@@ -189,8 +198,23 @@ static int render(const arguments *options, kmaskedit *editor, kmask *mask)
     kmaskedit_compose(editor, &frame, 0, 0);
     kmask_ui_baselines(&frame, editor, width,
                        height - KMASK_UI_STATUS_HEIGHT);
-    kmask_ui_status(&frame, height - KMASK_UI_STATUS_HEIGHT, width, editor,
-                    options->mask_path, NULL);
+    {
+        /* Counted unconditionally here: a render is not interactive, so
+         * there is nobody for it to stall. */
+        kmask_rect bounds;
+        size_t needed = 0u;
+        kmask_ui_state chrome;
+
+        (void)kmask_decompose(mask, kmaskedit_get_region(editor), &bounds,
+                              NULL, 0u, &needed);
+        (void)memset(&chrome, 0, sizeof(chrome));
+        chrome.path = options->mask_path;
+        chrome.rect_count = needed;
+        chrome.rect_known = true;
+        chrome.rect_cap = options->rect_cap;
+        kmask_ui_status(&frame, height - KMASK_UI_STATUS_HEIGHT, width,
+                        editor, &chrome);
+    }
     if (!sr_write_ppm(&frame, options->render_path)) {
         (void)fprintf(stderr, "kilix-mask: could not write %s\n",
                       options->render_path);
@@ -359,7 +383,8 @@ int main(int argc, char **argv)
 
     status = options.render_path != NULL
                  ? render(&options, editor, mask)
-                 : kmask_run(editor, mask, options.mask_path);
+                 : kmask_run(editor, mask, options.mask_path,
+                             options.rect_cap);
 
     kmaskedit_free(editor);
     kmask_free(mask);

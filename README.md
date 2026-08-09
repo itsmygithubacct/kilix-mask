@@ -240,6 +240,34 @@ An existing mask is loaded and **its** geometry used — `--cell` and `--size`
 describe a new mask only, because re-gridding a loaded one would move every
 cell that was ever painted.
 
+### The rectangle count
+
+The strip reports how many rectangles the active region would decompose into,
+because a consumer with a fixed budget needs that *before* saving rather than
+as a rejection afterwards — kilix-land-desktop caps a room at 64 obstacles and
+refuses to write one past it. Pass `--cap 64` and the count is flagged once it
+goes over; without a cap it is reported without a verdict.
+
+It is recomputed automatically, but only while that is free. Measured:
+
+| mask | grid | decompose |
+| --- | --- | --- |
+| land-desktop walkable, cell 6 | 214×120 | **1–3 ms** |
+| walk-behind, one cell per pixel | 1280×720 | **27–71 ms** |
+| camera mask 1080p, per pixel | 1920×1080 | **148 ms** |
+
+So the case the budget exists for is free, and the per-pixel case — which has no
+obstacle budget anyway — would stall visibly after every stroke. Rather than
+hard-code a grid-size cutoff calibrated on one machine, the first count that
+overruns an 8 ms budget switches the refresh off for the session; the number
+then carries a `?` meaning it describes an older shape, and `n` asks for a fresh
+one. A stale number shown as stale beats a stale number shown as current.
+
+`kmaskedit_revision()` is what makes that possible: a counter that moves
+whenever any cell does. `kmaskedit_modified()` cannot serve, because it tracks
+distance from the last save — edit and undo back and it reads false at both
+ends while the cells took two different shapes on the way.
+
 Two ways to run it without a terminal:
 
 ```sh

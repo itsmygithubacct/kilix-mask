@@ -103,6 +103,8 @@ struct kmaskedit {
     size_t saved_cursor;
     bool saved_known;
 
+    uint64_t revision;
+
     kmaskedit_rect damage[KMASKEDIT_DAMAGE_MAX_RECTS];
     size_t damage_count;
     bool damage_full;
@@ -322,6 +324,14 @@ static bool undo_record(kmaskedit *editor, uint32_t index, uint8_t before,
 
 /* ------------------------------- cell writes ---------------------------- */
 
+/* Every cell write goes through here, so nothing can change the map
+ * without moving the revision on with it. */
+static void apply_cell(kmaskedit *editor, int cx, int cy, uint8_t value)
+{
+    kmask_set(editor->mask, cx, cy, value);
+    editor->revision++;
+}
+
 static bool set_cell(kmaskedit *editor, int cx, int cy, uint8_t value)
 {
     uint8_t before;
@@ -334,7 +344,7 @@ static bool set_cell(kmaskedit *editor, int cx, int cy, uint8_t value)
     if (before == value) {
         return false;
     }
-    kmask_set(editor->mask, cx, cy, value);
+    apply_cell(editor, cx, cy, value);
     if (editor->recording) {
         (void)undo_record(editor,
                           (uint32_t)((size_t)cy * (size_t)editor->grid_width +
@@ -1066,10 +1076,10 @@ static void undo_pending(kmaskedit *editor)
 
         op->count--;
         entry = &op->cells[op->count];
-        kmask_set(editor->mask,
-                  (int)(entry->index % (uint32_t)editor->grid_width),
-                  (int)(entry->index / (uint32_t)editor->grid_width),
-                  entry->before);
+        apply_cell(editor,
+                   (int)(entry->index % (uint32_t)editor->grid_width),
+                   (int)(entry->index / (uint32_t)editor->grid_width),
+                   entry->before);
     }
 }
 
@@ -1146,10 +1156,10 @@ bool kmaskedit_undo(kmaskedit *editor)
     for (size_t i = op->count; i > 0u; i--) {
         const undo_cell *entry = &op->cells[i - 1u];
 
-        kmask_set(editor->mask,
-                  (int)(entry->index % (uint32_t)editor->grid_width),
-                  (int)(entry->index / (uint32_t)editor->grid_width),
-                  entry->before);
+        apply_cell(editor,
+                   (int)(entry->index % (uint32_t)editor->grid_width),
+                   (int)(entry->index / (uint32_t)editor->grid_width),
+                   entry->before);
     }
     kmaskedit_damage_all(editor);
     return true;
@@ -1167,10 +1177,10 @@ bool kmaskedit_redo(kmaskedit *editor)
     for (size_t i = 0u; i < op->count; i++) {
         const undo_cell *entry = &op->cells[i];
 
-        kmask_set(editor->mask,
-                  (int)(entry->index % (uint32_t)editor->grid_width),
-                  (int)(entry->index / (uint32_t)editor->grid_width),
-                  entry->after);
+        apply_cell(editor,
+                   (int)(entry->index % (uint32_t)editor->grid_width),
+                   (int)(entry->index / (uint32_t)editor->grid_width),
+                   entry->after);
     }
     editor->op_cursor++;
     kmaskedit_damage_all(editor);
@@ -1194,6 +1204,11 @@ void kmaskedit_mark_saved(kmaskedit *editor)
         editor->saved_cursor = editor->op_cursor;
         editor->saved_known = true;
     }
+}
+
+uint64_t kmaskedit_revision(const kmaskedit *editor)
+{
+    return editor != NULL ? editor->revision : 0u;
 }
 
 /* ------------------------------ composition ----------------------------- */

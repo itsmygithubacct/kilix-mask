@@ -15,19 +15,43 @@
 #define KMASK_UI_STATUS_HEIGHT 40
 
 /*
+ * What the strip reports that the editor does not already know.
+ *
+ * A struct rather than more parameters: the strip is the one place every
+ * piece of session state surfaces, and a growing positional list is how
+ * two of them end up swapped.
+ */
+typedef struct kmask_ui_state {
+    const char *path;
+    /* The transient line - what was just saved, what went wrong.  NULL or
+     * empty shows the key hint instead. */
+    const char *message;
+
+    /* Rectangles the active region's decomposition would produce.  A
+     * consumer with a fixed budget - land-desktop caps a room at 64
+     * obstacles and refuses to save past it - needs this before saving,
+     * not as a rejection afterwards. */
+    size_t rect_count;
+    bool rect_known;
+    /* The map moved since that count was taken.  Shown rather than
+     * hidden, because a number quietly describing an older shape is
+     * worse than one openly marked out of date. */
+    bool rect_stale;
+    /* 0 when no budget was configured, in which case the count is
+     * reported without a verdict on it. */
+    int rect_cap;
+} kmask_ui_state;
+
+/*
  * Draw the status strip across the bottom `KMASK_UI_STATUS_HEIGHT` pixels
  * of a canvas `width` wide, starting at `y`.
- *
- * `message` is the transient line - what was just saved, what went wrong -
- * and may be NULL, in which case the key hint is shown instead.
  */
 void kmask_ui_status(
     sr_canvas *out,
     int y,
     int width,
     const kmaskedit *editor,
-    const char *path,
-    const char *message);
+    const kmask_ui_state *state);
 
 /* Centred key reference over the view. */
 void kmask_ui_help(sr_canvas *out, int width, int height);

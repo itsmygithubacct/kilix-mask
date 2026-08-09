@@ -41,9 +41,10 @@ void kmask_ui_status(
     int y,
     int width,
     const kmaskedit *editor,
-    const char *path,
-    const char *message)
+    const kmask_ui_state *state)
 {
+    const char *path = state != NULL ? state->path : NULL;
+    const char *message = state != NULL ? state->message : NULL;
     const kmask *mask = kmaskedit_mask(editor);
     const uint8_t region = kmaskedit_get_region(editor);
     const char *name = mask != NULL ? kmask_region_name(mask, region) : NULL;
@@ -52,7 +53,7 @@ void kmask_ui_status(
     int cx = 0;
     int cy = 0;
 
-    if (out == NULL || editor == NULL) {
+    if (out == NULL || editor == NULL || state == NULL) {
         return;
     }
     sr_fill_rect(out, 0.0f, (float)y, (float)width,
@@ -91,6 +92,22 @@ void kmask_ui_status(
                     1);
             cursor_x += sr_text_width(line, 1) + 16;
         }
+    }
+    if (state->rect_known) {
+        const bool over = state->rect_cap > 0 &&
+                          state->rect_count > (size_t)state->rect_cap;
+
+        if (state->rect_cap > 0) {
+            (void)snprintf(line, sizeof(line), "rects %zu/%d%s",
+                           state->rect_count, state->rect_cap,
+                           state->rect_stale ? "?" : "");
+        } else {
+            (void)snprintf(line, sizeof(line), "rects %zu%s",
+                           state->rect_count, state->rect_stale ? "?" : "");
+        }
+        sr_text(out, (float)cursor_x, (float)(y + 6), line,
+                over ? MARK_RGB : DIM_RGB, 1.0f, 1);
+        cursor_x += sr_text_width(line, 1) + 16;
     }
     if (kmaskedit_hover_cell(editor, &cx, &cy)) {
         (void)snprintf(line, sizeof(line), "%d,%d", cx, cy);
@@ -166,6 +183,7 @@ void kmask_ui_help(sr_canvas *out, int width, int height)
         "arrows / hjkl   pan                 + -  zoom",
         "f               fit to view         g    grid",
         "u / R           undo / redo         c    clear region",
+        "n               recount the decomposition rectangles",
         "B / x           set / clear this region's walk-behind baseline",
         "s               save                esc  cancel a stroke",
         "q               quit (twice if unsaved)"

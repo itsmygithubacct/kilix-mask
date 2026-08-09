@@ -10,6 +10,8 @@
 #include "kmask_run.h"
 #include "kmask_ui.h"
 
+#include "kilix_mask_rects.h"
+
 #include "kitty_terminal_session.h"
 
 #include <errno.h>
@@ -18,9 +20,27 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define POLL_INTERVAL_MS 40
+
+/*
+ * How long a decomposition may take before it stops being recomputed by
+ * itself.
+ *
+ * Measured, not guessed: a land-desktop walkable map at cell 6 is a
+ * 214x120 grid and decomposes in 1-3 ms, while the same picture at one
+ * cell per pixel is 1280x720 and takes 27-71 ms - and a 1080p per-pixel
+ * mask 148 ms.  Recomputing that after every stroke would be a visible
+ * stall on exactly the masks that have no obstacle budget anyway.
+ *
+ * A budget rather than a grid-size cutoff, because the cutoff would have
+ * been calibrated on one machine and this fleet runs the same tools on
+ * far slower ones.  The first count that overruns turns the automatic
+ * refresh off for the session; the operator can still ask for one.
+ */
+#define RECT_BUDGET_MS 8.0
 
 /* One short of the presenter's own limit, leaving room for the status
  * strip's rectangle without tipping it into a full frame. */
@@ -35,6 +55,14 @@ typedef struct app {
     bool chrome_dirty;
     bool quitting;
     bool confirm_quit;
+
+    /* The decomposition count, and what it was counted from. */
+    size_t rect_count;
+    uint64_t rect_revision;
+    uint8_t rect_region;
+    bool rect_known;
+    bool rect_auto;
+    int rect_cap;
 } app;
 
 /*
@@ -68,6 +96,54 @@ static void install_handlers(void)
     /* A terminal that goes away mid-write must not kill us before the
      * restore runs. */
     (void)signal(SIGPIPE, SIG_IGN);
+}
+
+static double now_ms(void)
+{
+    struct timespec at;
+
+    (void)clock_gettime(CLOCK_MONOTONIC, &at);
+    return (double)at.tv_sec * 1000.0 + (double)at.tv_nsec / 1e6;
+}
+
+/*
+ * Recount the rectangles the active region would decompose into.
+ *
+ * Skipped mid-stroke: the number is of no use while it is still being
+ * painted, and the work would land on every drag event.  `forced` is the
+ * operator asking for one anyway, which is the only way to get a fresh
+ * count once the automatic refresh has turned itself off.
+ */
+static void refresh_rect_count(app *state, bool forced)
+{
+    const uint8_t region = kmaskedit_get_region(state->editor);
+    const uint64_t revision = kmaskedit_revision(state->editor);
+    kmask_rect bounds;
+    size_t needed = 0u;
+    double started;
+
+    if (kmaskedit_stroking(state->editor)) {
+        return;
+    }
+    if (state->rect_known && revision == state->rect_revision &&
+        region == state->rect_region) {
+        return;
+    }
+    if (!state->rect_auto && !forced) {
+        return;   /* left marked stale; see rect_stale below */
+    }
+    started = now_ms();
+    /* No output buffer: this only wants the count, and asking for one
+     * costs nothing but the sweep that has to happen regardless. */
+    (void)kmask_decompose(state->mask, region, &bounds, NULL, 0u, &needed);
+    if (now_ms() - started > RECT_BUDGET_MS) {
+        state->rect_auto = false;
+    }
+    state->rect_count = needed;
+    state->rect_revision = revision;
+    state->rect_region = region;
+    state->rect_known = true;
+    state->chrome_dirty = true;
 }
 
 static void say(app *state, const char *text)
@@ -201,6 +277,11 @@ static bool handle_key(app *state, const kittykb_event *event, int view_w,
         kmaskedit_damage_all(editor);
         break;
     }
+    case 'n':
+        refresh_rect_count(state, true);
+        say(state, kmaskedit_stroking(editor) ? "finish the stroke first"
+                                              : "recounted");
+        break;
     case '?':
         state->help = !state->help;
         kmaskedit_damage_all(editor);
@@ -271,7 +352,7 @@ static void handle_mouse(app *state, const kittyin_mouse_event *mouse,
     }
 }
 
-int kmask_run(kmaskedit *editor, kmask *mask, const char *path)
+int kmask_run(kmaskedit *editor, kmask *mask, const char *path, int rect_cap)
 {
     kittyts_session session;
     kittyts_options options;
@@ -291,6 +372,8 @@ int kmask_run(kmaskedit *editor, kmask *mask, const char *path)
     state.editor = editor;
     state.mask = mask;
     state.path = path;
+    state.rect_cap = rect_cap;
+    state.rect_auto = true;
 
     kittyts_session_init(&session);
     kittyts_options_init(&options);
@@ -383,6 +466,7 @@ int kmask_run(kmaskedit *editor, kmask *mask, const char *path)
             break;
         }
 
+        refresh_rect_count(&state, false);
         {
             kmaskedit_rect rects[EDIT_DAMAGE_MAX + 1];
             kittyfb_rect patches[EDIT_DAMAGE_MAX + 1];
@@ -394,8 +478,17 @@ int kmask_run(kmaskedit *editor, kmask *mask, const char *path)
             }
             kmaskedit_compose(editor, &frame, 0, 0);
             kmask_ui_baselines(&frame, editor, width, view_h);
-            kmask_ui_status(&frame, view_h, width, editor, path,
-                            state.message);
+            {
+                const kmask_ui_state chrome = {
+                    path, state.message, state.rect_count, state.rect_known,
+                    state.rect_known &&
+                        (kmaskedit_revision(editor) != state.rect_revision ||
+                         kmaskedit_get_region(editor) != state.rect_region),
+                    state.rect_cap
+                };
+
+                kmask_ui_status(&frame, view_h, width, editor, &chrome);
+            }
             if (state.help) {
                 kmask_ui_help(&frame, width, view_h);
             }

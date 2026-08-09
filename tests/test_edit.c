@@ -448,6 +448,62 @@ test_history_drops_the_oldest(void)
 }
 
 /*
+ * The revision exists for callers that cache something expensive derived
+ * from the map.  What it must do that "modified" cannot is notice a
+ * change that ends where it started: edit, then undo, and the map took
+ * two different shapes on the way while modified is false at both ends.
+ */
+static bool
+test_revision_tracks_the_cells(void)
+{
+    kmask *mask = NULL;
+    kmaskedit *editor = NULL;
+    uint64_t start;
+    uint64_t after_paint;
+    uint64_t after_undo;
+
+    CHECK(kmask_create(&mask, 40, 40, 1));
+    CHECK(kmaskedit_create(&editor, mask, NULL));
+    CHECK(kmaskedit_set_view(editor, 40, 40));
+    start = kmaskedit_revision(editor);
+
+    kmaskedit_press(editor, 10, 10, KMASKEDIT_BUTTON_PAINT);
+    kmaskedit_release(editor, 10, 10);
+    after_paint = kmaskedit_revision(editor);
+    CHECK(after_paint != start);
+
+    /* Painting the value a cell already holds changes nothing, so it must
+     * not invalidate anybody's cache. */
+    kmaskedit_set_region(editor, kmask_get(mask, 10, 10));
+    kmaskedit_press(editor, 10, 10, KMASKEDIT_BUTTON_ERASE);
+    kmaskedit_release(editor, 10, 10);
+    kmaskedit_press(editor, 10, 10, KMASKEDIT_BUTTON_ERASE);
+    kmaskedit_release(editor, 10, 10);
+    {
+        const uint64_t settled = kmaskedit_revision(editor);
+
+        kmaskedit_press(editor, 10, 10, KMASKEDIT_BUTTON_ERASE);
+        kmaskedit_release(editor, 10, 10);
+        CHECK(kmaskedit_revision(editor) == settled);
+    }
+
+    /* And back to the beginning: unmodified, but the shape moved twice,
+     * so anything cached against it is stale. */
+    while (kmaskedit_undo(editor)) {
+        /* all the way back */
+    }
+    after_undo = kmaskedit_revision(editor);
+    CHECK(!kmaskedit_modified(editor));
+    CHECK(after_undo != after_paint);
+    CHECK(after_undo != start);
+
+    CHECK(kmaskedit_revision(NULL) == 0u);
+    kmaskedit_free(editor);
+    kmask_free(mask);
+    return true;
+}
+
+/*
  * A terminal reports pointer motion at whatever rate it manages, so a
  * quick drag arrives as two positions far apart.  Without interpolation
  * the stroke is a row of disconnected dots.
@@ -716,6 +772,7 @@ main(void)
         {"compose stays inside its view", test_compose_stays_inside_its_view},
         {"undo restores exactly", test_undo_restores_exactly},
         {"history drops the oldest", test_history_drops_the_oldest},
+        {"revision tracks the cells", test_revision_tracks_the_cells},
         {"a fast drag paints a line", test_a_fast_drag_paints_a_line},
         {"a stroke decides paint or erase once", test_a_stroke_decides_once},
         {"the wand follows the image", test_wand_follows_the_image},

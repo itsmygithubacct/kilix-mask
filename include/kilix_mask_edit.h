@@ -217,6 +217,21 @@ bool kmaskedit_can_redo(const kmaskedit *editor);
 bool kmaskedit_modified(const kmaskedit *editor);
 void kmaskedit_mark_saved(kmaskedit *editor);
 
+/*
+ * A counter that changes whenever any cell does.
+ *
+ * For a caller that derives something expensive from the map - a
+ * rectangle decomposition, a collision structure - and needs to know
+ * whether what it derived is still current.  Comparing two readings is
+ * the whole interface: the value itself means nothing, only its
+ * inequality does.
+ *
+ * "Modified" cannot serve here.  It tracks distance from the last save,
+ * so editing and then undoing back leaves it false while the cells took
+ * two different shapes on the way.
+ */
+uint64_t kmaskedit_revision(const kmaskedit *editor);
+
 /* ----------------------------- presentation ----------------------------- */
 
 /*
