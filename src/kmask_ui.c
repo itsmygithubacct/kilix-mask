@@ -1,6 +1,7 @@
 #include "kmask_ui.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define BAR_RGB 0x00181820u
@@ -80,6 +81,17 @@ void kmask_ui_status(
         sr_text(out, (float)cursor_x, (float)(y + 6), line, DIM_RGB, 1.0f, 1);
         cursor_x += sr_text_width(line, 1) + 16;
     }
+    {
+        const char *baseline =
+            mask != NULL ? kmask_region_attr(mask, region, "baseline") : NULL;
+
+        if (baseline != NULL && baseline[0] != '\0') {
+            (void)snprintf(line, sizeof(line), "base %s", baseline);
+            sr_text(out, (float)cursor_x, (float)(y + 6), line, DIM_RGB, 1.0f,
+                    1);
+            cursor_x += sr_text_width(line, 1) + 16;
+        }
+    }
     if (kmaskedit_hover_cell(editor, &cx, &cy)) {
         (void)snprintf(line, sizeof(line), "%d,%d", cx, cy);
         sr_text(out, (float)cursor_x, (float)(y + 6), line, DIM_RGB, 1.0f, 1);
@@ -99,6 +111,50 @@ void kmask_ui_status(
             1);
 }
 
+void kmask_ui_baselines(
+    sr_canvas *out, const kmaskedit *editor, int width, int view_height)
+{
+    const kmask *mask = kmaskedit_mask(editor);
+    const uint8_t active = kmaskedit_get_region(editor);
+
+    if (out == NULL || mask == NULL) {
+        return;
+    }
+    for (unsigned region = 1u; region <= KMASK_REGION_MAX; region++) {
+        const char *value =
+            kmask_region_attr(mask, (uint8_t)region, "baseline");
+        const bool selected = region == active;
+        char label[64];
+        int y = 0;
+        long source_y;
+        char *end = NULL;
+
+        if (value == NULL || value[0] == '\0') {
+            continue;
+        }
+        source_y = strtol(value, &end, 10);
+        if (end == value || *end != '\0') {
+            continue;   /* somebody else's idea of a baseline */
+        }
+        kmaskedit_to_view(editor, 0, (int)source_y, NULL, &y);
+        if (y < 0 || y >= view_height) {
+            continue;
+        }
+        /* Dashed, so it reads as a marker rather than as something
+         * painted into the mask. */
+        sr_line(out, 0.0f, (float)y, (float)width, (float)y, 1.0f,
+                selected ? 0x00FFFFFFu : kmask_region_color(mask,
+                                                            (uint8_t)region),
+                selected ? 0.95f : 0.5f, 6, 4);
+        if (selected) {
+            (void)snprintf(label, sizeof(label), "id%u base %ld", region,
+                           source_y);
+            sr_text_shadow(out, 6.0f, (float)(y - 18 < 0 ? y + 3 : y - 18),
+                           label, TEXT_RGB, 1.0f, 1);
+        }
+    }
+}
+
 void kmask_ui_help(sr_canvas *out, int width, int height)
 {
     static const char *const lines[] = {
@@ -110,6 +166,7 @@ void kmask_ui_help(sr_canvas *out, int width, int height)
         "arrows / hjkl   pan                 + -  zoom",
         "f               fit to view         g    grid",
         "u / R           undo / redo         c    clear region",
+        "B / x           set / clear this region's walk-behind baseline",
         "s               save                esc  cancel a stroke",
         "q               quit (twice if unsaved)"
     };

@@ -225,6 +225,17 @@ kilix-mask --image plate.ppm --cell 6 room.mask.png
 ```
 
 Drag to paint, right-drag to erase, wheel to zoom at the pointer, `?` for keys.
+`B` sets the active region's walk-behind baseline from the cursor and `x` clears
+it — set from the pointer rather than typed, because the number only means
+anything relative to the picture underneath it. Regions carrying one get a
+dashed marker across the view, the active one bright and labelled.
+
+Those markers are drawn by the command, not by `kmaskedit_compose()`. Region
+attributes are free-form strings precisely so the editor need not know what any
+of them mean; teaching it that `baseline` is a horizontal line in a walk-behind
+mask would put one consumer's vocabulary into the header every other consumer
+includes.
+
 An existing mask is loaded and **its** geometry used — `--cell` and `--size`
 describe a new mask only, because re-gridding a loaded one would move every
 cell that was ever painted.

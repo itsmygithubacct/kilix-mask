@@ -32,4 +32,19 @@ void kmask_ui_status(
 /* Centred key reference over the view. */
 void kmask_ui_help(sr_canvas *out, int width, int height);
 
+/*
+ * Draw a marker line for every region carrying a `baseline` attribute,
+ * the active region's brightly and labelled, the rest dim.
+ *
+ * Here rather than in kmaskedit_compose() on purpose.  Region attributes
+ * are free-form strings precisely so the editor need not know what any of
+ * them mean; teaching it that "baseline" is a horizontal line in a
+ * walk-behind mask would put one consumer's vocabulary into the header
+ * every other consumer includes.  A mask with no baselines draws nothing,
+ * so this costs those consumers a loop over 255 empty regions and no
+ * more.
+ */
+void kmask_ui_baselines(
+    sr_canvas *out, const kmaskedit *editor, int width, int view_height);
+
 #endif /* KMASK_UI_H */

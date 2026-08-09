@@ -166,6 +166,41 @@ static bool handle_key(app *state, const kittykb_event *event, int view_w,
     case 'c':
         kmaskedit_clear_region(editor, kmaskedit_get_region(editor));
         break;
+    case 'B':
+    case 'x': {
+        /* Walk-behind regions carry the y a character passes in front of.
+         * Set from the cursor rather than typed, because the number only
+         * means anything relative to the picture underneath it. */
+        kmask *mask = kmaskedit_mask(editor);
+        const uint8_t region = kmaskedit_get_region(editor);
+        int cy = 0;
+        char text[24];
+
+        if (region == 0u) {
+            say(state, "region 0 is the absence of a region; pick 1-9");
+            break;
+        }
+        if (key == 'x') {
+            (void)kmask_region_set_attr(mask, region, "baseline", NULL);
+            say(state, "baseline cleared");
+        } else {
+            if (!kmaskedit_hover_cell(editor, NULL, &cy)) {
+                say(state, "point at the picture to set a baseline");
+                break;
+            }
+            (void)snprintf(text, sizeof(text), "%d",
+                           cy * kmask_cell(mask));
+            if (!kmask_region_set_attr(mask, region, "baseline", text)) {
+                say(state, "this region has no room for another attribute");
+                break;
+            }
+            say(state, "baseline set");
+        }
+        /* The marker spans the view, so patching the cursor's few cells
+         * would leave the old line drawn. */
+        kmaskedit_damage_all(editor);
+        break;
+    }
     case '?':
         state->help = !state->help;
         kmaskedit_damage_all(editor);
@@ -358,6 +393,7 @@ int kmask_run(kmaskedit *editor, kmask *mask, const char *path)
                 continue;
             }
             kmaskedit_compose(editor, &frame, 0, 0);
+            kmask_ui_baselines(&frame, editor, width, view_h);
             kmask_ui_status(&frame, view_h, width, editor, path,
                             state.message);
             if (state.help) {

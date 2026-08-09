@@ -187,6 +187,8 @@ static int render(const arguments *options, kmaskedit *editor, kmask *mask)
      * bare picture with a tint on it. */
     kmaskedit_hover(editor, width / 2, (height - KMASK_UI_STATUS_HEIGHT) / 2);
     kmaskedit_compose(editor, &frame, 0, 0);
+    kmask_ui_baselines(&frame, editor, width,
+                       height - KMASK_UI_STATUS_HEIGHT);
     kmask_ui_status(&frame, height - KMASK_UI_STATUS_HEIGHT, width, editor,
                     options->mask_path, NULL);
     if (!sr_write_ppm(&frame, options->render_path)) {
