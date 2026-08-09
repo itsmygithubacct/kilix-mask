@@ -218,6 +218,49 @@ Some smaller decisions that are easy to get wrong:
 `kmaskedit_compose()` draws at an offset and honours the canvas' existing clip,
 so reserving a status bar takes no cooperation from the editor.
 
+## The command
+
+```sh
+kilix-mask --image plate.ppm --cell 6 room.mask.png
+```
+
+Drag to paint, right-drag to erase, wheel to zoom at the pointer, `?` for keys.
+An existing mask is loaded and **its** geometry used — `--cell` and `--size`
+describe a new mask only, because re-gridding a loaded one would move every
+cell that was ever painted.
+
+Two ways to run it without a terminal:
+
+```sh
+kilix-mask --image plate.ppm --render frame.ppm room.mask.png
+kilix-mask --selftest
+```
+
+`--render` composes exactly what the editor would show, chrome included, so a
+picture of the tool cannot drift from the tool. `--selftest` exercises the
+assembled binary — create, paint, encode, decode, decompose, apply, compose —
+and is the only check available on a machine that has the program installed but
+not this source tree. `make test` runs it alongside the suites.
+
+Pictures are binary PPM. Decoding arbitrary image formats is not this module's
+job and the error message says so:
+
+```sh
+ffmpeg -i snapshot.jpg -pix_fmt rgb24 plate.ppm
+```
+
+The terminal side is deliberately thin — read the pointer, place it in the
+frame, hand back pixels — because it is the one part no test reaches. Two
+things it does need to get right:
+
+- **A pixel mouse report is relative to the terminal**, and the frame is
+  centred inside it. `kittyts_origin_x()` / `_y()` give the difference. That
+  accessor did not exist; it was added for this, since the alternative was
+  re-deriving the centering and letting it drift from the real placement.
+- **Frames and patches are different presentation calls.** Editor damage plus
+  the status strip goes to `kittyts_present_damage()`; a resize or the help
+  overlay goes to a full `kittyts_present()`.
+
 ## License
 
 MIT. See `LICENSE`.

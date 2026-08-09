@@ -15,12 +15,34 @@ CFLAGS ?= -O2 -g
 override CFLAGS += -std=c11 -fPIC $(WARNINGS)
 LDLIBS += -lz
 
-# Vendored and pinned.  Only the editor needs it; the model and the
-# rectangle decomposition depend on nothing but C11 and zlib, which is why
-# they are a separate library.
+# Vendored and pinned.  Only the editor needs soft-raster; the model and
+# the rectangle decomposition depend on nothing but C11 and zlib, which is
+# why they are a separate library.  The terminal stack below that is
+# needed only by the command.
 SR := third_party/soft-raster
+KTS := third_party/kitty-terminal-session
+KFB := $(KTS)/third_party/kitty-framebuffer
+KIN := $(KTS)/third_party/kitty-input
+KKB := $(KIN)/third_party/kitty_keyboard
+
 EDIT_CPPFLAGS := -I$(SR)/include
 EDIT_LDLIBS := -lm
+
+CMD_CPPFLAGS := $(EDIT_CPPFLAGS) -I$(KTS)/include -I$(KFB)/include \
+	-I$(KIN)/include -I$(KKB)/include -Isrc
+CMD_LDLIBS := -lm -lpthread
+
+CMD_SOURCES := src/main.c src/kmask_run.c src/kmask_ui.c
+CMD_VENDOR_SOURCES := \
+	$(KTS)/src/kitty_terminal_session.c \
+	$(KFB)/src/kitty_framebuffer.c \
+	$(KIN)/src/kitty_input.c \
+	$(KIN)/src/kitty_input_posix.c \
+	$(KKB)/src/kitty_keyboard.c \
+	$(KKB)/src/kitty_keyboard_posix.c
+CMD_VENDOR_OBJECTS := \
+	$(patsubst %.c,$(BUILD_DIR)/vendor/%.o,$(notdir $(CMD_VENDOR_SOURCES)))
+COMMAND := $(BUILD_DIR)/kilix-mask
 
 STATIC_LIB := $(BUILD_DIR)/lib$(PROJECT).a
 SHARED_LIB := $(BUILD_DIR)/lib$(PROJECT).so
@@ -38,7 +60,7 @@ TESTS := $(BUILD_DIR)/test-mask $(BUILD_DIR)/test-rects $(BUILD_DIR)/test-edit
 
 .PHONY: all test sanitize install clean
 
-all: $(STATIC_LIB) $(SHARED_LIB) $(EDIT_LIB)
+all: $(STATIC_LIB) $(SHARED_LIB) $(EDIT_LIB) $(COMMAND)
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
@@ -70,6 +92,21 @@ $(EDIT_LIB): $(EDIT_OBJECTS)
 $(SR_OBJECT): $(SR)/src/soft_raster.c | $(BUILD_DIR)/vendor
 	$(CC) $(CPPFLAGS) $(EDIT_CPPFLAGS) $(VENDOR_CFLAGS) -c $< -o $@
 
+# vpath lets one rule cover vendored sources from several trees.
+vpath %.c $(sort $(dir $(CMD_VENDOR_SOURCES)))
+
+$(BUILD_DIR)/vendor/%.o: %.c | $(BUILD_DIR)/vendor
+	$(CC) $(CPPFLAGS) $(CMD_CPPFLAGS) $(VENDOR_CFLAGS) -c $< -o $@
+
+$(COMMAND): $(CMD_SOURCES) $(CMD_VENDOR_OBJECTS) $(EDIT_LIB) $(STATIC_LIB) \
+		$(SR_OBJECT) | $(BUILD_DIR)
+	@test -f $(KTS)/src/kitty_terminal_session.c || { \
+		printf 'submodules missing; run: git submodule update --init --recursive\n' >&2; \
+		exit 1; }
+	$(CC) $(CPPFLAGS) $(CMD_CPPFLAGS) $(CFLAGS) $(LDFLAGS) \
+		$(CMD_SOURCES) $(CMD_VENDOR_OBJECTS) $(EDIT_LIB) $(STATIC_LIB) \
+		$(SR_OBJECT) $(LDLIBS) $(CMD_LDLIBS) -o $@
+
 $(BUILD_DIR)/test-%: tests/test_%.c $(STATIC_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $< $(STATIC_LIB) $(LDLIBS) -o $@
 
@@ -78,11 +115,17 @@ $(BUILD_DIR)/test-edit: tests/test_edit.c $(EDIT_LIB) $(STATIC_LIB) \
 	$(CC) $(CPPFLAGS) $(EDIT_CPPFLAGS) $(CFLAGS) $(LDFLAGS) $< \
 		$(EDIT_LIB) $(STATIC_LIB) $(SR_OBJECT) $(LDLIBS) $(EDIT_LDLIBS) -o $@
 
-test: $(TESTS)
+# The command's own --selftest runs here too.  It duplicates a little of
+# what the suites cover, deliberately: it is the only check that the
+# assembled binary works, and it is what can be run on a machine that has
+# the tool installed but not this source tree.
+test: $(TESTS) $(COMMAND)
 	@set -e; for binary in $(TESTS); do \
 		printf '\n== %s ==\n' "$$binary"; \
 		"$$binary"; \
 	done; \
+	printf '\n== %s --selftest ==\n' "$(COMMAND)"; \
+	$(COMMAND) --selftest; \
 	printf '\nall test suites passed\n'
 
 sanitize: CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer
@@ -98,6 +141,8 @@ install: all
 	$(INSTALL) -d $(DESTDIR)$(PREFIX)/lib
 	$(INSTALL) -m 644 $(STATIC_LIB) $(EDIT_LIB) $(DESTDIR)$(PREFIX)/lib/
 	$(INSTALL) -m 755 $(SHARED_LIB) $(DESTDIR)$(PREFIX)/lib/
+	$(INSTALL) -d $(DESTDIR)$(PREFIX)/bin
+	$(INSTALL) -m 755 $(COMMAND) $(DESTDIR)$(PREFIX)/bin/
 
 clean:
 	rm -rf $(BUILD_DIR)

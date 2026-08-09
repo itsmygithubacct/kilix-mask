@@ -51,9 +51,11 @@ extern "C" {
 typedef struct kmaskedit kmaskedit;
 
 /*
- * View-space rectangle, x1/y1 exclusive.  Deliberately the same shape as
- * kittyfb_rect so damage can be handed to the framebuffer's patch path
- * without a translation step.
+ * View-space rectangle, x1/y1 exclusive.  The same four fields in the
+ * same order as kittyfb_rect, so handing damage to the framebuffer's
+ * patch path is a copy and never a conversion - but a copy, not a cast:
+ * a reordering in either header should be a compile error rather than
+ * silently transposed rectangles.
  */
 typedef struct kmaskedit_rect {
     int x0;
