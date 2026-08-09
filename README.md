@@ -8,14 +8,15 @@ the burnt-in timestamp. A top-down game needs to know which parts of a room can
 be walked on, and which stand in front of the character. Both are a person
 painting regions over a picture and something later reading them back.
 
-This is the model and its file format. Painting interactively is a separate
-concern; a consumer that only reads masks never links the editor.
-
-Dependencies are a C11 compiler and zlib.
+Two libraries. `libkilix-mask` is the model and its file format, and needs
+only C11 and zlib. `libkilix-mask-edit` is the painting on top, and adds
+soft-raster. A consumer that only reads masks links the first and never pays
+for the second.
 
 ## Build
 
 ```sh
+git submodule update --init --recursive
 make
 make test
 make sanitize
@@ -150,6 +151,72 @@ Two details that only matter on real painted shapes:
 
 Over capacity, the count needed is reported rather than the list truncated: a
 silently short list of holes decomposes into a different room.
+
+## The editor
+
+`kilix_mask_edit.h` is the painting: a viewport, brush / rectangle / flood-fill
+/ pick tools, undo, and a compositor that draws the image, the region tints,
+the grid and the cursor into a soft-raster canvas.
+
+There is no terminal anywhere in it. That is not tidiness — a painting tool is
+close to untestable once its logic lives inside an event loop, because the two
+bugs that actually matter are invisible from outside a running session:
+
+```c
+kmaskedit_create(&editor, mask, &plate);
+kmaskedit_set_view(editor, 1280, 720);
+
+kmaskedit_press(editor, 200, 140, KMASKEDIT_BUTTON_PAINT);
+kmaskedit_drag(editor, 260, 190);
+kmaskedit_release(editor, 260, 190);
+
+kmaskedit_compose(editor, &frame, 0, 0);
+count = kmaskedit_take_damage(editor, rects, KMASKEDIT_DAMAGE_MAX_RECTS);
+```
+
+**The pointer and the picture agree by construction.** Composition samples the
+image through the same lookup tables `kmaskedit_to_source()` reads, so the cell
+drawn at a view pixel is always the cell that painting there will change. The
+alternative — deriving the mapping once to draw and once to hit-test — puts
+paint one cell away from the cursor at some zoom levels and not others, which
+is close to undiagnosable from a screenshot. There is one mapping, so the two
+cannot drift apart. The test composes an image whose pixels are all
+distinguishable and reads back every view pixel at five scales, panned off
+centre.
+
+**Damage is never under-reported.** Every change records the view rectangle it
+could have touched, rounded outwards. Too large costs a few bytes on the wire;
+too small leaves a pixel stale until something unrelated repaints it. The test
+composes, acts, composes again, and requires every moved pixel to fall inside a
+reported rectangle — over four hundred random operations, because the damage
+bugs that survive are in combinations nobody thinks to try. It caught one:
+shrinking the brush reported the new cursor footprint and left the old, larger
+outline on screen.
+
+Whether a damaged area is still worth patching is not decided here.
+`kittyfb_present_damage()` already measures that and falls back on its own;
+two thresholds that could disagree would make the cheaper path depend on
+whichever was stricter.
+
+Some smaller decisions that are easy to get wrong:
+
+- **A stroke decides paint-or-erase once, at press.** If the cell under the
+  pointer already holds the active region the whole stroke erases. Deciding per
+  cell makes a drag across a boundary flicker on and off under the pointer.
+- **Drags interpolate.** A terminal reports motion at whatever rate it manages,
+  so a quick drag arrives as two distant positions; without this a stroke is a
+  row of dots. Walking in cells rather than pixels keeps the work proportional
+  to what is painted.
+- **Brush sizes are odd.** An even footprint has no centre cell to sit under
+  the pointer, so it paints off to one side.
+- **A background whose size differs from the mask is refused**, not scaled.
+  Scaling puts every region over the wrong pixels while looking plausible.
+- **History is bounded and drops the oldest**, subject to a byte budget as well
+  as a count, because one flood fill can be millions of cells. The newest entry
+  is never dropped, even if it alone exceeds the budget.
+
+`kmaskedit_compose()` draws at an offset and honours the canvas' existing clip,
+so reserving a status bar takes no cooperation from the editor.
 
 ## License
 

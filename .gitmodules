@@ -1,0 +1,3 @@
+[submodule "third_party/soft-raster"]
+	path = third_party/soft-raster
+	url = https://github.com/itsmygithubacct/soft-raster.git
