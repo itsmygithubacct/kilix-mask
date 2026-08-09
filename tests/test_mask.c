@@ -377,6 +377,84 @@ test_file_round_trip(void)
     return true;
 }
 
+/*
+ * kmask_import() is the inverse of kmask_expand(), and at a cell of 1 it
+ * has to be exactly that: a game's own on-disk mask goes in and comes
+ * back out unchanged, or the conversion silently edits the asset.
+ */
+static bool
+test_import_round_trips(void)
+{
+    kmask *mask = NULL;
+    uint8_t *source = NULL;
+    uint8_t *back = NULL;
+    const size_t pixels = 64u * 48u;
+
+    source = malloc(pixels);
+    back = malloc(pixels);
+    CHECK(source != NULL && back != NULL);
+    for (size_t i = 0u; i < pixels; i++) {
+        source[i] = (uint8_t)(i % 5u == 0u ? 0u : 1u + (i % 7u));
+    }
+    CHECK(kmask_create(&mask, 64, 48, 1));
+    CHECK(kmask_import(mask, source, pixels));
+    CHECK(kmask_expand(mask, back, pixels));
+    CHECK(memcmp(source, back, pixels) == 0);
+
+    /* It replaces rather than merges: anything painted before is gone. */
+    kmask_fill_rect(mask, 0, 0, 64, 48, 9u);
+    CHECK(kmask_import(mask, source, pixels));
+    CHECK(kmask_expand(mask, back, pixels));
+    CHECK(memcmp(source, back, pixels) == 0);
+
+    CHECK(!kmask_import(mask, source, pixels - 1u));
+    CHECK(!kmask_import(mask, NULL, pixels));
+    CHECK(!kmask_import(NULL, source, pixels));
+
+    free(back);
+    free(source);
+    kmask_free(mask);
+    return true;
+}
+
+/* Above a cell of 1 the pixels in a cell disagree and the rule has to be
+ * stated: the commonest non-zero wins, and a cell is only 0 when nothing
+ * in it is set.  Sampling one corner instead would drop the thin parts of
+ * a region, which is exactly what a walk-behind edge is made of. */
+static bool
+test_import_reconciles_a_cell(void)
+{
+    kmask *mask = NULL;
+    uint8_t source[8u * 4u];
+
+    CHECK(kmask_create(&mask, 8, 4, 4));
+    CHECK(kmask_grid_width(mask) == 2 && kmask_grid_height(mask) == 1);
+
+    (void)memset(source, 0, sizeof(source));
+    /* Left cell: three 2s and two 5s, so 2 wins on count. */
+    source[0] = 2u; source[1] = 2u; source[2] = 5u; source[3] = 5u;
+    source[8] = 2u;
+    /* Right cell: a single set pixel among fifteen zeros still counts,
+     * because a region that covers part of a cell covers the cell. */
+    source[8 + 5] = 7u;
+    CHECK(kmask_import(mask, source, sizeof(source)));
+    CHECK(kmask_get(mask, 0, 0) == 2u);
+    CHECK(kmask_get(mask, 1, 0) == 7u);
+
+    /* A tie keeps the lower id, so the same input always gives the same
+     * map rather than depending on scan order. */
+    (void)memset(source, 0, sizeof(source));
+    source[0] = 6u;
+    source[1] = 3u;
+    CHECK(kmask_import(mask, source, sizeof(source)));
+    CHECK(kmask_get(mask, 0, 0) == 3u);
+
+    /* Nothing set anywhere in the cell is the only way to get 0. */
+    CHECK(kmask_get(mask, 1, 0) == 0u);
+    kmask_free(mask);
+    return true;
+}
+
 typedef bool (*test_function)(void);
 
 typedef struct test_case {
@@ -393,6 +471,8 @@ main(void)
          test_painting_in_both_coordinate_spaces},
         {"region names and attributes", test_region_names_and_attributes},
         {"expansion polarity", test_expansion_polarity},
+        {"import round trips", test_import_round_trips},
+        {"import reconciles a cell", test_import_reconciles_a_cell},
         {"round trip preserves everything",
          test_round_trip_preserves_everything},
         {"output is a valid png", test_output_is_a_valid_png},

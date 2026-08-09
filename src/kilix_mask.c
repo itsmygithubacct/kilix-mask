@@ -433,6 +433,73 @@ bool kmask_expand(const kmask *mask, uint8_t *out, size_t size)
     return true;
 }
 
+/*
+ * One pass over the source, tallying per cell, then one pass to pick a
+ * winner.  Counting into a 256-wide tally per cell rather than sorting
+ * keeps this linear in pixels, which matters: the case it exists for is
+ * a million of them.
+ */
+bool kmask_import(kmask *mask, const uint8_t *values, size_t size)
+{
+    uint16_t (*tally)[KMASK_REGION_MAX + 1];
+    size_t cells;
+
+    if (mask == NULL || values == NULL) {
+        return false;
+    }
+    if (size != (size_t)mask->source_width * (size_t)mask->source_height) {
+        return false;
+    }
+    cells = (size_t)mask->grid_width * (size_t)mask->grid_height;
+    if (mask->cell == 1) {
+        /* Every pixel is its own cell, so there is nothing to reconcile
+         * and nothing to count. */
+        for (int y = 0; y < mask->source_height; y++) {
+            (void)memcpy(mask->cells + (size_t)y * (size_t)mask->grid_width,
+                         values + (size_t)y * (size_t)mask->source_width,
+                         (size_t)mask->source_width);
+        }
+        return true;
+    }
+    tally = calloc(cells, sizeof(*tally));
+    if (tally == NULL) {
+        return false;
+    }
+    for (int y = 0; y < mask->source_height; y++) {
+        const size_t row = (size_t)(y / mask->cell) * (size_t)mask->grid_width;
+        const uint8_t *source = values + (size_t)y * (size_t)mask->source_width;
+
+        for (int x = 0; x < mask->source_width; x++) {
+            const uint8_t value = source[x];
+
+            if (value != 0u) {
+                /* Saturating, so a cell larger than 65535 pixels cannot
+                 * wrap a count back down past a rival. */
+                uint16_t *slot = &tally[row + (size_t)(x / mask->cell)][value];
+
+                if (*slot < UINT16_MAX) {
+                    (*slot)++;
+                }
+            }
+        }
+    }
+    for (size_t cell = 0u; cell < cells; cell++) {
+        unsigned best = 0u;
+        uint16_t best_count = 0u;
+
+        for (unsigned region = 1u; region <= KMASK_REGION_MAX; region++) {
+            if (tally[cell][region] > best_count) {
+                best_count = tally[cell][region];
+                best = region;   /* strictly greater, so ties keep the
+                                  * lower id and the result is stable */
+            }
+        }
+        mask->cells[cell] = (uint8_t)best;
+    }
+    free(tally);
+    return true;
+}
+
 bool kmask_expand_exclude(
     const kmask *mask, uint8_t region, uint8_t *out, size_t size)
 {

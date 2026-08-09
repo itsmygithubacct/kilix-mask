@@ -138,6 +138,27 @@ uint32_t kmask_region_color(const kmask *mask, uint8_t region);
 bool kmask_expand(const kmask *mask, uint8_t *out, size_t size);
 
 /*
+ * The other direction: take one byte per source pixel and reduce it to
+ * the grid, replacing everything the map held.
+ *
+ * For bringing in a map something else produced - an asset in a game's
+ * own on-disk format, a mask exported by another tool - without pushing
+ * it through kmask_set() a pixel at a time, which for a per-pixel map
+ * over a 1280x720 plate is nearly a million calls.
+ *
+ * Where several source pixels fall in one cell they have to be reconciled,
+ * and the rule is **the most common non-zero value, ties to the lowest
+ * id**; a cell is 0 only when no pixel in it is set.  That matches how
+ * painting already behaves - kmask_fill_rect() covers every cell a
+ * rectangle touches rather than only those wholly inside it - so
+ * shrinking a map does not quietly drop the thin parts of a region.  At
+ * a cell of 1 the question does not arise and the copy is exact.
+ *
+ * `size` must be source_width * source_height.
+ */
+bool kmask_import(kmask *mask, const uint8_t *values, size_t size);
+
+/*
  * One byte per source pixel: 0 where `region` is painted, 255 elsewhere.
  *
  * This polarity is deliberate and worth stating, because it is the one
