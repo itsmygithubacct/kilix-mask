@@ -17,7 +17,7 @@ LDLIBS += -lz
 
 STATIC_LIB := $(BUILD_DIR)/lib$(PROJECT).a
 SHARED_LIB := $(BUILD_DIR)/lib$(PROJECT).so
-OBJECTS := $(BUILD_DIR)/kilix_mask.o
+OBJECTS := $(BUILD_DIR)/kilix_mask.o $(BUILD_DIR)/kilix_mask_rects.o
 
 TEST_SOURCES := $(wildcard tests/test_*.c)
 TEST_BINARIES := $(patsubst tests/test_%.c,$(BUILD_DIR)/test-%,$(TEST_SOURCES))
@@ -29,7 +29,7 @@ all: $(STATIC_LIB) $(SHARED_LIB)
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-$(BUILD_DIR)/%.o: src/%.c include/kilix_mask.h | $(BUILD_DIR)
+$(BUILD_DIR)/%.o: src/%.c include/kilix_mask.h include/kilix_mask_rects.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 $(STATIC_LIB): $(OBJECTS)
@@ -56,7 +56,8 @@ sanitize: clean
 
 install: all
 	$(INSTALL) -d $(DESTDIR)$(PREFIX)/include
-	$(INSTALL) -m 644 include/kilix_mask.h $(DESTDIR)$(PREFIX)/include/
+	$(INSTALL) -m 644 include/kilix_mask.h include/kilix_mask_rects.h \
+		$(DESTDIR)$(PREFIX)/include/
 	$(INSTALL) -d $(DESTDIR)$(PREFIX)/lib
 	$(INSTALL) -m 644 $(STATIC_LIB) $(DESTDIR)$(PREFIX)/lib/
 	$(INSTALL) -m 755 $(SHARED_LIB) $(DESTDIR)$(PREFIX)/lib/

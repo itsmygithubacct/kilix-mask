@@ -112,6 +112,45 @@ that re-saved the file will have added some. A file that is a PNG but not one of
 ours is refused, because the geometry lives in the metadata and there is nothing
 to reconstruct without it.
 
+## Rectangles
+
+A map is convenient to paint and inconvenient to ship: a game storing rooms as
+JSON wants a handful of rectangles, not a bitmap. `kilix_mask_rects.h` converts
+between the two, in a separate header because most consumers never need it — a
+motion mask is read as a bitmap and never becomes rectangles at all.
+
+```c
+kmask_rect bounds, holes[256];
+size_t needed;
+kmask_decompose(mask, region, &bounds, holes, 256, &needed);
+kmask_apply(other, region, &bounds, holes, needed);   /* exact inverse */
+```
+
+`kmask_cover()` gives rectangles covering a region directly. `kmask_decompose()`
+gives the shape a room model usually wants — one bounding rectangle plus the
+holes inside it — because a room is mostly floor with furniture in it rather
+than the reverse, and "this box minus these obstacles" is far smaller than a
+cover of the floor.
+
+**The round trip is a fixpoint**, and that is the property worth caring about:
+decomposing a map and painting the result back reproduces it cell for cell.
+Without it every edit-save-reload cycle would erode a shape slightly, and the
+drift would only surface after enough cycles that nobody could say which edit
+caused it. The tests pin it over hand-built room shapes and over forty random
+ones at varying cell sizes.
+
+Two details that only matter on real painted shapes:
+
+- **Both sweep orientations are tried** and the smaller kept. Painted shapes are
+  run-heavy in one direction — 50 horizontal stripes cost 50 rectangles
+  row-major and 5000 column-major.
+- **Runs are grown before they are thickened**, and only while the whole run
+  stays inside the shape. Thickening cell by cell leaves ragged single-cell
+  rectangles along every diagonal edge.
+
+Over capacity, the count needed is reported rather than the list truncated: a
+silently short list of holes decomposes into a different room.
+
 ## License
 
 MIT. See `LICENSE`.
