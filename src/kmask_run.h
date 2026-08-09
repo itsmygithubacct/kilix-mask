@@ -1,7 +1,7 @@
 #ifndef KMASK_RUN_H
 #define KMASK_RUN_H
 
-#include "kilix_mask_edit.h"
+#include "kmask_marks.h"
 
 /*
  * Run the interactive editor on this terminal until the operator quits.
@@ -12,9 +12,13 @@
  * exceeded, or 0 when there is none - the module has no opinion about
  * what a reasonable budget is, only about reporting it.
  *
+ * `marks` are annotations to draw over the view and may be NULL; they are
+ * never part of the map and are never written back.
+ *
  * Returns a process exit status: 0 for a clean quit, 1 for a terminal
  * that could not be used.
  */
-int kmask_run(kmaskedit *editor, kmask *mask, const char *path, int rect_cap);
+int kmask_run(kmaskedit *editor, kmask *mask, const char *path, int rect_cap,
+              const kmask_marks *marks);
 
 #endif /* KMASK_RUN_H */

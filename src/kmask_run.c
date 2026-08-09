@@ -55,6 +55,9 @@ typedef struct app {
     bool chrome_dirty;
     bool quitting;
     bool confirm_quit;
+    const kmask_marks *marks;
+    bool show_marks;
+    bool show_labels;
 
     /* The decomposition count, and what it was counted from. */
     size_t rect_count;
@@ -277,6 +280,19 @@ static bool handle_key(app *state, const kittykb_event *event, int view_w,
         kmaskedit_damage_all(editor);
         break;
     }
+    case 'm':
+        /* Off, outlines, outlines with labels - a busy room is more
+         * legible without the text, and sometimes without either. */
+        if (!state->show_marks) {
+            state->show_marks = true;
+            state->show_labels = false;
+        } else if (!state->show_labels) {
+            state->show_labels = true;
+        } else {
+            state->show_marks = false;
+        }
+        kmaskedit_damage_all(editor);
+        break;
     case 'n':
         refresh_rect_count(state, true);
         say(state, kmaskedit_stroking(editor) ? "finish the stroke first"
@@ -352,7 +368,8 @@ static void handle_mouse(app *state, const kittyin_mouse_event *mouse,
     }
 }
 
-int kmask_run(kmaskedit *editor, kmask *mask, const char *path, int rect_cap)
+int kmask_run(kmaskedit *editor, kmask *mask, const char *path, int rect_cap,
+              const kmask_marks *marks)
 {
     kittyts_session session;
     kittyts_options options;
@@ -374,6 +391,11 @@ int kmask_run(kmaskedit *editor, kmask *mask, const char *path, int rect_cap)
     state.path = path;
     state.rect_cap = rect_cap;
     state.rect_auto = true;
+    state.marks = marks;
+    /* On by default: the reason to pass marks is to paint in relation to
+     * them, so hiding them until asked would be the wrong way round. */
+    state.show_marks = marks != NULL && marks->count > 0u;
+    state.show_labels = true;
 
     kittyts_session_init(&session);
     kittyts_options_init(&options);
@@ -478,6 +500,10 @@ int kmask_run(kmaskedit *editor, kmask *mask, const char *path, int rect_cap)
             }
             kmaskedit_compose(editor, &frame, 0, 0);
             kmask_ui_baselines(&frame, editor, width, view_h);
+            if (state.show_marks) {
+                kmask_marks_draw(&frame, editor, state.marks, width, view_h,
+                                 state.show_labels);
+            }
             {
                 const kmask_ui_state chrome = {
                     path, state.message, state.rect_count, state.rect_known,

@@ -184,6 +184,7 @@ void kmask_ui_help(sr_canvas *out, int width, int height)
         "f               fit to view         g    grid",
         "u / R           undo / redo         c    clear region",
         "n               recount the decomposition rectangles",
+        "m               annotations: outlines, +labels, off",
         "B / x           set / clear this region's walk-behind baseline",
         "s               save                esc  cancel a stroke",
         "q               quit (twice if unsaved)"

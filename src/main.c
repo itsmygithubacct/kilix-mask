@@ -10,6 +10,7 @@
  */
 
 #include "kmask_run.h"
+#include "kmask_marks.h"
 #include "kmask_ui.h"
 
 #include "kilix_mask_image.h"
@@ -31,6 +32,7 @@ typedef struct arguments {
     int width;
     int height;
     int rect_cap;
+    const char *marks_path;
     bool selftest;
     bool help;
 } arguments;
@@ -48,6 +50,11 @@ static void usage(FILE *stream)
         "  --cell N         source pixels per map cell for a new mask\n"
         "                   (default 1; larger stores a grid)\n"
         "  --size WxH       source size for a new mask with no picture\n"
+        "  --marks FILE     annotations to draw over the view: lines of\n"
+        "                   `rect X Y W H RRGGBB [label]` or\n"
+        "                   `point X Y RRGGBB [label]`, in source pixels.\n"
+        "                   Never part of the mask, never saved.  `m` cycles\n"
+        "                   outlines / +labels / off\n"
         "  --cap N          obstacle budget: the decomposition count is\n"
         "                   flagged past it (land-desktop caps a room at 64)\n"
         "  --render FILE    compose one frame to a PPM and exit\n"
@@ -105,6 +112,8 @@ static bool parse_arguments(int argc, char **argv, arguments *out)
                 (void)fprintf(stderr, "kilix-mask: --cell must be at least 1\n");
                 return false;
             }
+        } else if (strcmp(argument, "--marks") == 0 && has_value) {
+            out->marks_path = argv[++i];
         } else if (strcmp(argument, "--cap") == 0 && has_value) {
             out->rect_cap = atoi(argv[++i]);
             if (out->rect_cap < 0) {
@@ -179,7 +188,8 @@ static bool open_mask(const arguments *options, const sr_canvas *image,
     return true;
 }
 
-static int render(const arguments *options, kmaskedit *editor, kmask *mask)
+static int render(const arguments *options, kmaskedit *editor, kmask *mask,
+                  const kmask_marks *marks)
 {
     sr_canvas frame;
     int width = options->width > 0 ? options->width : DEFAULT_RENDER_W;
@@ -198,6 +208,10 @@ static int render(const arguments *options, kmaskedit *editor, kmask *mask)
     kmaskedit_compose(editor, &frame, 0, 0);
     kmask_ui_baselines(&frame, editor, width,
                        height - KMASK_UI_STATUS_HEIGHT);
+    if (marks != NULL) {
+        kmask_marks_draw(&frame, editor, marks, width,
+                         height - KMASK_UI_STATUS_HEIGHT, true);
+    }
     {
         /* Counted unconditionally here: a render is not interactive, so
          * there is nobody for it to stall. */
@@ -337,6 +351,8 @@ int main(int argc, char **argv)
     kmaskedit *editor = NULL;
     sr_canvas plate;
     sr_canvas *image = NULL;
+    kmask_marks marks;
+    const kmask_marks *annotations = NULL;
     int status;
 
     if (!parse_arguments(argc, argv, &options)) {
@@ -349,6 +365,22 @@ int main(int argc, char **argv)
     }
     if (options.selftest) {
         return selftest();
+    }
+    if (options.marks_path != NULL) {
+        char reason[KMASK_MARK_ERROR_MAX];
+
+        if (!kmask_marks_load(&marks, options.marks_path, reason,
+                              sizeof(reason))) {
+            (void)fprintf(stderr, "kilix-mask: %s\n", reason);
+            return 1;
+        }
+        if (marks.dropped > 0u) {
+            (void)fprintf(stderr,
+                          "kilix-mask: showing %zu marks, %zu past the "
+                          "limit of %d\n",
+                          marks.count, marks.dropped, KMASK_MARK_MAX);
+        }
+        annotations = &marks;
     }
     if (options.image_path != NULL) {
         if (!kmask_image_load(&plate, options.image_path)) {
@@ -382,9 +414,9 @@ int main(int argc, char **argv)
     }
 
     status = options.render_path != NULL
-                 ? render(&options, editor, mask)
+                 ? render(&options, editor, mask, annotations)
                  : kmask_run(editor, mask, options.mask_path,
-                             options.rect_cap);
+                             options.rect_cap, annotations);
 
     kmaskedit_free(editor);
     kmask_free(mask);

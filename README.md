@@ -240,6 +240,28 @@ An existing mask is loaded and **its** geometry used — `--cell` and `--size`
 describe a new mask only, because re-gridding a loaded one would move every
 cell that was ever painted.
 
+### Annotations
+
+A mask is painted in relation to things that are not in the picture — where a
+doorway is, where a character spawns, where a detection zone sits. `--marks`
+takes a file of them:
+
+```
+rect  1205 480 21 192 3399FF  door to living
+point 640  627 00FFFF         bedroom-postcard
+```
+
+Source coordinates, `m` cycles outlines / +labels / off. They are **never part
+of the mask**: nothing here is saved, editable, or able to change a cell, and
+what any of them mean belongs entirely to the caller. Painting walkable space
+without being able to see where the door is means painting blind and hearing
+about it from a validator afterwards.
+
+A malformed line is refused by line number rather than skipped — a door that
+quietly fails to draw is worse than no annotations, because the map gets
+painted around a door that was never there. Past the limit the overflow is
+counted, not dropped in silence.
+
 ### The rectangle count
 
 The strip reports how many rectangles the active region would decompose into,

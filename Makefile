@@ -32,7 +32,8 @@ CMD_CPPFLAGS := $(EDIT_CPPFLAGS) -I$(KTS)/include -I$(KFB)/include \
 	-I$(KIN)/include -I$(KKB)/include -Isrc
 CMD_LDLIBS := -lm -lpthread
 
-CMD_SOURCES := src/main.c src/kmask_run.c src/kmask_ui.c
+CMD_SOURCES := src/main.c src/kmask_run.c src/kmask_ui.c \
+	src/kmask_marks.c
 CMD_VENDOR_SOURCES := \
 	$(KTS)/src/kitty_terminal_session.c \
 	$(KFB)/src/kitty_framebuffer.c \
@@ -58,7 +59,7 @@ SR_OBJECT := $(BUILD_DIR)/vendor/soft_raster.o
 VENDOR_CFLAGS := $(CFLAGS) -Wno-conversion -Wno-sign-conversion
 
 TESTS := $(BUILD_DIR)/test-mask $(BUILD_DIR)/test-rects \
-	$(BUILD_DIR)/test-edit $(BUILD_DIR)/test-image
+	$(BUILD_DIR)/test-edit $(BUILD_DIR)/test-image $(BUILD_DIR)/test-marks
 
 .PHONY: all test sanitize install clean
 
@@ -119,6 +120,14 @@ $(BUILD_DIR)/test-%: tests/test_%.c $(STATIC_LIB) | $(BUILD_DIR)
 $(BUILD_DIR)/test-edit: tests/test_edit.c $(EDIT_LIB) $(STATIC_LIB) \
 		$(SR_OBJECT) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(EDIT_CPPFLAGS) $(CFLAGS) $(LDFLAGS) $< \
+		$(EDIT_LIB) $(STATIC_LIB) $(SR_OBJECT) $(LDLIBS) $(EDIT_LDLIBS) -o $@
+
+# Marks belong to the command rather than either library, so the test
+# compiles that source directly.
+$(BUILD_DIR)/test-marks: tests/test_marks.c src/kmask_marks.c \
+		$(EDIT_LIB) $(STATIC_LIB) $(SR_OBJECT) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(EDIT_CPPFLAGS) -Isrc $(CFLAGS) $(LDFLAGS) \
+		tests/test_marks.c src/kmask_marks.c \
 		$(EDIT_LIB) $(STATIC_LIB) $(SR_OBJECT) $(LDLIBS) $(EDIT_LDLIBS) -o $@
 
 $(BUILD_DIR)/test-image: tests/test_image.c tests/image_fixtures.h \
