@@ -321,6 +321,34 @@ bool kmask_decompose(
     return ok;
 }
 
+/* A hole in grid coordinates, so the bounds walk below compares instead
+ * of dividing.  The four divisions per hole are loop invariant across
+ * the whole walk, and recomputing them per cell per hole is what made
+ * applying a per-pixel decomposition cost the better part of a second. */
+typedef struct cell_hole {
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+} cell_hole;
+
+static bool blocked_by_source_holes(const kmask_rect *holes,
+                                    size_t hole_count, int cell,
+                                    int cx, int cy)
+{
+    for (size_t i = 0u; i < hole_count; i++) {
+        const int hx0 = holes[i].x / cell;
+        const int hy0 = holes[i].y / cell;
+        const int hx1 = (holes[i].x + holes[i].w) / cell;
+        const int hy1 = (holes[i].y + holes[i].h) / cell;
+
+        if (cx >= hx0 && cx < hx1 && cy >= hy0 && cy < hy1) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool kmask_apply(
     kmask *mask,
     uint8_t region,
@@ -333,6 +361,8 @@ bool kmask_apply(
     int cy0;
     int cx1;
     int cy1;
+    cell_hole *cells = NULL;
+    size_t *active = NULL;
 
     if (mask == NULL || bounds == NULL || cell <= 0) {
         return false;
@@ -348,22 +378,57 @@ bool kmask_apply(
     cx1 = (bounds->x + bounds->w) / cell;
     cy1 = (bounds->y + bounds->h) / cell;
 
+    if (hole_count > 0u) {
+        cells = malloc(hole_count * sizeof(*cells));
+        active = malloc(hole_count * sizeof(*active));
+    }
+    if (cells == NULL || active == NULL) {
+        /* Applying never failed for want of memory before and still does
+         * not: without room for the converted holes, fall back to
+         * dividing in place.  Slow, correct, and taken only under
+         * pressure this function did not create. */
+        free(cells);
+        free(active);
+        for (int cy = cy0; cy < cy1; cy++) {
+            for (int cx = cx0; cx < cx1; cx++) {
+                if (!blocked_by_source_holes(holes, hole_count, cell, cx,
+                                             cy)) {
+                    kmask_set(mask, cx, cy, region);
+                }
+            }
+        }
+        return true;
+    }
+    for (size_t i = 0u; i < hole_count; i++) {
+        cells[i].x0 = holes[i].x / cell;
+        cells[i].y0 = holes[i].y / cell;
+        cells[i].x1 = (holes[i].x + holes[i].w) / cell;
+        cells[i].y1 = (holes[i].y + holes[i].h) / cell;
+    }
     for (int cy = cy0; cy < cy1; cy++) {
+        size_t active_count = 0u;
+
+        /* Most holes touch few rows, so collect the ones crossing this
+         * row once and test cells against those alone. */
+        for (size_t i = 0u; i < hole_count; i++) {
+            if (cy >= cells[i].y0 && cy < cells[i].y1) {
+                active[active_count++] = i;
+            }
+        }
         for (int cx = cx0; cx < cx1; cx++) {
             bool blocked = false;
 
-            for (size_t i = 0u; i < hole_count && !blocked; i++) {
-                const int hx0 = holes[i].x / cell;
-                const int hy0 = holes[i].y / cell;
-                const int hx1 = (holes[i].x + holes[i].w) / cell;
-                const int hy1 = (holes[i].y + holes[i].h) / cell;
+            for (size_t i = 0u; i < active_count && !blocked; i++) {
+                const cell_hole *hole = &cells[active[i]];
 
-                blocked = cx >= hx0 && cx < hx1 && cy >= hy0 && cy < hy1;
+                blocked = cx >= hole->x0 && cx < hole->x1;
             }
             if (!blocked) {
                 kmask_set(mask, cx, cy, region);
             }
         }
     }
+    free(active);
+    free(cells);
     return true;
 }
