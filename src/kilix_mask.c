@@ -143,6 +143,14 @@ void kmask_set(kmask *mask, int cx, int cy, uint8_t region)
     mask->cells[(size_t)cy * (size_t)mask->grid_width + (size_t)cx] = region;
 }
 
+const uint8_t *kmask_row(const kmask *mask, int cy)
+{
+    if (mask == NULL || cy < 0 || cy >= mask->grid_height) {
+        return NULL;
+    }
+    return mask->cells + (size_t)cy * (size_t)mask->grid_width;
+}
+
 uint8_t kmask_get_at(const kmask *mask, int x, int y)
 {
     /* The sign check has to happen before the division: truncation maps

@@ -70,6 +70,11 @@ struct kmaskedit {
     float origin_y;
     int *col_src;
     int *row_src;
+    /* col_src divided down to a grid column, kept alongside because the
+     * compose loop needs it once per view pixel and the division is loop
+     * invariant per column.  Only meaningful where col_src lands inside
+     * the image; elsewhere it holds 0 and nothing reads it. */
+    int *col_cx;
 
     kmaskedit_tool tool;
     uint8_t region;
@@ -422,8 +427,11 @@ static void rebuild_tables(kmaskedit *editor)
         return;
     }
     for (int vx = 0; vx < editor->view_width; vx++) {
-        editor->col_src[vx] =
+        const int source_x =
             (int)floorf(((float)vx - editor->origin_x) / editor->scale);
+
+        editor->col_src[vx] = source_x;
+        editor->col_cx[vx] = source_x >= 0 ? source_x / editor->cell : 0;
     }
     for (int vy = 0; vy < editor->view_height; vy++) {
         editor->row_src[vy] =
@@ -508,6 +516,7 @@ void kmaskedit_free(kmaskedit *editor)
     undo_op_free(&editor->pending);
     free(editor->col_src);
     free(editor->row_src);
+    free(editor->col_cx);
     free(editor);
 }
 
@@ -522,6 +531,7 @@ bool kmaskedit_set_view(kmaskedit *editor, int width, int height)
 {
     int *columns;
     int *rows;
+    int *cells;
 
     if (editor == NULL || width <= 0 || height <= 0) {
         return false;
@@ -536,6 +546,11 @@ bool kmaskedit_set_view(kmaskedit *editor, int width, int height)
         return false;
     }
     editor->row_src = rows;
+    cells = realloc(editor->col_cx, (size_t)width * sizeof(int));
+    if (cells == NULL) {
+        return false;
+    }
+    editor->col_cx = cells;
     editor->view_width = width;
     editor->view_height = height;
     if (!editor->view_set) {
@@ -1268,6 +1283,11 @@ void kmaskedit_compose(
         const bool row_inside =
             source_y >= 0 && source_y < editor->source_height;
         const int cy = row_inside ? source_y / editor->cell : 0;
+        /* The row of cells once, and the column indices from the table
+         * built with col_src: a checked lookup and a division per pixel
+         * are a measurable share of a full-frame compose, and both are
+         * invariant along their axis. */
+        const uint8_t *cells = row_inside ? kmask_row(editor->mask, cy) : NULL;
 
         for (int dx = dst_x0; dx < dst_x1; dx++) {
             const int source_x = editor->col_src[dx - origin_x];
@@ -1290,7 +1310,7 @@ void kmaskedit_compose(
                              ? CHECKER_B
                              : CHECKER_A;
             }
-            region = kmask_get(editor->mask, source_x / editor->cell, cy);
+            region = cells[editor->col_cx[dx - origin_x]];
             row[dx] = region == 0u
                           ? (0xFF000000u | (colour & 0x00FFFFFFu))
                           : blend_over(colour, palette[region],

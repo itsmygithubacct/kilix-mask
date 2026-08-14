@@ -70,6 +70,15 @@ test_painting_in_both_coordinate_spaces(void)
     kmask_set_at(mask, 55, 65, 2u);
     CHECK(kmask_get(mask, 5, 6) == 2u);
 
+    /* Row access sees the same cells as the checked accessor, and rows
+     * that do not exist are NULL rather than an address. */
+    CHECK(kmask_row(mask, 4) != NULL);
+    CHECK(kmask_row(mask, 4)[3] == kmask_get(mask, 3, 4));
+    CHECK(kmask_row(mask, 6)[5] == 2u);
+    CHECK(kmask_row(NULL, 0) == NULL);
+    CHECK(kmask_row(mask, -1) == NULL);
+    CHECK(kmask_row(mask, 10) == NULL);
+
     /* Out of range is ignored rather than fatal: a brush sweeping off the
      * edge should not need clamping by every caller. */
     kmask_set(mask, -1, 0, 9u);

@@ -231,9 +231,11 @@ size_t kmask_cover(
         return 0u;
     }
     for (int cy = 0; cy < height; cy++) {
+        const uint8_t *row = kmask_row(mask, cy);
+
         for (int cx = 0; cx < width; cx++) {
             cells[(size_t)cy * (size_t)width + (size_t)cx] =
-                kmask_get(mask, cx, cy) == region ? 1u : 0u;
+                row[cx] == region ? 1u : 0u;
         }
     }
     written = cover_cells(cells, width, height, kmask_cell(mask), 0, 0, rects,
@@ -270,8 +272,10 @@ bool kmask_decompose(
         return false;
     }
     for (int cy = 0; cy < height; cy++) {
+        const uint8_t *row = kmask_row(mask, cy);
+
         for (int cx = 0; cx < width; cx++) {
-            if (kmask_get(mask, cx, cy) != region) {
+            if (row[cx] != region) {
                 continue;
             }
             if (cx < min_cx) { min_cx = cx; }
@@ -297,10 +301,11 @@ bool kmask_decompose(
         return false;
     }
     for (int cy = 0; cy < box_height; cy++) {
+        const uint8_t *row = kmask_row(mask, min_cy + cy) + min_cx;
+
         for (int cx = 0; cx < box_width; cx++) {
             inverse[(size_t)cy * (size_t)box_width + (size_t)cx] =
-                kmask_get(mask, min_cx + cx, min_cy + cy) == region
-                    ? (uint8_t)0u : (uint8_t)1u;
+                row[cx] == region ? (uint8_t)0u : (uint8_t)1u;
         }
     }
     (void)cover_cells(inverse, box_width, box_height, cell, min_cx, min_cy,

@@ -76,6 +76,19 @@ int kmask_grid_height(const kmask *mask);
 uint8_t kmask_get(const kmask *mask, int cx, int cy);
 void kmask_set(kmask *mask, int cx, int cy, uint8_t region);
 
+/*
+ * One grid row, kmask_grid_width() cells of it, or NULL when the mask is
+ * NULL or the row is out of range.
+ *
+ * For read paths that visit many cells in order - a compositor sampling
+ * the region under every view pixel, a cover copying the whole grid -
+ * where a bounds-checked call per cell is the measurable cost.  The
+ * caller checks the row once and indexes; the pointer stays valid for
+ * the mask's lifetime.  It is read-only: writes still go through
+ * kmask_set(), which is what keeps every write bounds-checked.
+ */
+const uint8_t *kmask_row(const kmask *mask, int cy);
+
 /* Source coordinates, mapped through the cell size.  A caller working in
  * image space never has to know the grid resolution. */
 uint8_t kmask_get_at(const kmask *mask, int x, int y);
