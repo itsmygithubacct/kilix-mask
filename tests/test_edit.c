@@ -119,6 +119,173 @@ test_pointer_matches_picture(void)
     return true;
 }
 
+/*
+ * The same agreement, for the paint: at full overlay strength a painted
+ * cell composes to exactly its region's colour, so every view pixel can be
+ * predicted from kmask_get_at() at the source pixel the pointer maps it
+ * to.  This nails the compositor's region lookup to the public one - any
+ * shortcut it takes through the grid has to land on the same cell.
+ */
+static bool
+test_paint_matches_the_map(void)
+{
+    static const float scales[] = {0.0f, 1.0f, 2.0f, 0.5f};
+    kmask *mask = NULL;
+    kmaskedit *editor = NULL;
+    sr_canvas background;
+    sr_canvas frame;
+
+    CHECK(make_identity_background(&background, SOURCE_W, SOURCE_H));
+    CHECK(kmask_create(&mask, SOURCE_W, SOURCE_H, 3));
+    kmask_fill_rect(mask, 4, 4, 30, 22, 1u);
+    kmask_fill_rect(mask, 20, 15, 55, 40, 2u);
+    kmask_fill_rect(mask, 40, 2, 58, 12, 7u);
+    /* Diagonal single cells, so region edges land mid-cell-row often. */
+    for (int i = 0; i < 12; i++) {
+        kmask_set(mask, i, i, 3u);
+    }
+    kmask_region_set_color(mask, 1u, 0x102030u);
+    kmask_region_set_color(mask, 2u, 0x405060u);
+    kmask_region_set_color(mask, 3u, 0x708090u);
+    kmask_region_set_color(mask, 7u, 0xA0B0C0u);
+
+    CHECK(kmaskedit_create(&editor, mask, &background));
+    CHECK(kmaskedit_set_view(editor, VIEW_W, VIEW_H));
+    kmaskedit_set_grid(editor, false);
+    /* Full strength: a painted pixel is the palette colour, nothing mixed
+     * in, so the expectation needs no blending arithmetic. */
+    kmaskedit_set_overlay_alpha(editor, 1.0f);
+    CHECK(sr_canvas_init(&frame, VIEW_W, VIEW_H));
+
+    for (size_t i = 0u; i < sizeof(scales) / sizeof(scales[0]); i++) {
+        if (scales[i] == 0.0f) {
+            kmaskedit_fit(editor);
+        } else {
+            kmaskedit_fit(editor);
+            while (kmaskedit_scale(editor) < scales[i]) {
+                kmaskedit_zoom(editor, 1, VIEW_W / 3, VIEW_H / 3);
+            }
+        }
+        kmaskedit_pan(editor, -13, 7);
+        kmaskedit_compose(editor, &frame, 0, 0);
+
+        for (int vy = 0; vy < VIEW_H; vy++) {
+            for (int vx = 0; vx < VIEW_W; vx++) {
+                const uint32_t drawn =
+                    frame.px[(size_t)vy * VIEW_W + (size_t)vx];
+                int sx = 0;
+                int sy = 0;
+                uint8_t region;
+                uint32_t expected;
+
+                if (!kmaskedit_to_source(editor, vx, vy, &sx, &sy)) {
+                    continue;
+                }
+                region = kmask_get_at(mask, sx, sy);
+                expected = 0xFF000000u |
+                           (region == 0u
+                                ? (background.px[(size_t)sy * SOURCE_W +
+                                                 (size_t)sx] & 0x00FFFFFFu)
+                                : kmask_region_color(mask, region));
+                if (drawn != expected) {
+                    (void)fprintf(stderr,
+                                  "  scale %.3f view %d,%d: drew %08x, "
+                                  "region %u at source %d,%d says %08x\n",
+                                  (double)kmaskedit_scale(editor), vx, vy,
+                                  drawn, region, sx, sy, expected);
+                    return false;
+                }
+            }
+        }
+    }
+    sr_canvas_free(&frame);
+    kmaskedit_free(editor);
+    kmask_free(mask);
+    sr_canvas_free(&background);
+    return true;
+}
+
+/*
+ * Composing under a clip must paint exactly the pixels a full compose
+ * would have put there, and no others.  That is what lets a caller
+ * repaint only what changed and trust the rest of the frame to still be
+ * right - a clipped compose that disagreed with the full one would smear
+ * seams along every damage boundary.
+ */
+static bool
+test_a_clipped_compose_matches_the_full_one(void)
+{
+    static const kmaskedit_rect clips[] = {
+        {30, 20, 78, 68},     /* an interior square, cursor sized */
+        {0, 0, 25, 17},       /* against the corner */
+        {150, 100, 200, 140}, /* against the far edge */
+        {0, 60, 200, 75},     /* a full-width band */
+        {90, 0, 105, 140}     /* a full-height band */
+    };
+    kmask *mask = NULL;
+    kmaskedit *editor = NULL;
+    sr_canvas background;
+    sr_canvas full;
+    sr_canvas clipped;
+
+    CHECK(make_identity_background(&background, SOURCE_W, SOURCE_H));
+    CHECK(kmask_create(&mask, SOURCE_W, SOURCE_H, 3));
+    kmask_fill_rect(mask, 6, 6, 40, 30, 1u);
+    kmask_fill_rect(mask, 25, 20, 58, 41, 5u);
+    CHECK(kmaskedit_create(&editor, mask, &background));
+    CHECK(kmaskedit_set_view(editor, VIEW_W, VIEW_H));
+    CHECK(sr_canvas_init(&full, VIEW_W, VIEW_H));
+    CHECK(sr_canvas_init(&clipped, VIEW_W, VIEW_H));
+
+    /* Everything the compositor can draw is on: grid, blended paint, the
+     * cursor, and a rectangle preview mid-drag. */
+    kmaskedit_zoom(editor, 1, VIEW_W / 2, VIEW_H / 2);
+    kmaskedit_set_tool(editor, KMASKEDIT_TOOL_RECT);
+    kmaskedit_press(editor, 40, 30, KMASKEDIT_BUTTON_PAINT);
+    kmaskedit_drag(editor, 120, 90);
+    kmaskedit_hover(editor, 120, 90);
+
+    kmaskedit_compose(editor, &full, 0, 0);
+
+    for (size_t i = 0u; i < sizeof(clips) / sizeof(clips[0]); i++) {
+        const kmaskedit_rect clip = clips[i];
+
+        for (int p = 0; p < VIEW_W * VIEW_H; p++) {
+            clipped.px[p] = 0xFFABCDEFu;
+        }
+        sr_canvas_set_clip(&clipped, clip.x0, clip.y0, clip.x1 - clip.x0,
+                           clip.y1 - clip.y0);
+        kmaskedit_compose(editor, &clipped, 0, 0);
+        sr_canvas_reset_clip(&clipped);
+
+        for (int vy = 0; vy < VIEW_H; vy++) {
+            for (int vx = 0; vx < VIEW_W; vx++) {
+                const size_t at = (size_t)vy * VIEW_W + (size_t)vx;
+                const bool inside = vx >= clip.x0 && vx < clip.x1 &&
+                                    vy >= clip.y0 && vy < clip.y1;
+                const uint32_t want =
+                    inside ? full.px[at] : 0xFFABCDEFu;
+
+                if (clipped.px[at] != want) {
+                    (void)fprintf(stderr,
+                                  "  clip %zu pixel %d,%d (%s): %08x, "
+                                  "the full compose has %08x\n",
+                                  i, vx, vy, inside ? "inside" : "outside",
+                                  clipped.px[at], want);
+                    return false;
+                }
+            }
+        }
+    }
+    kmaskedit_cancel(editor);
+    sr_canvas_free(&clipped);
+    sr_canvas_free(&full);
+    kmaskedit_free(editor);
+    kmask_free(mask);
+    sr_canvas_free(&background);
+    return true;
+}
+
 static bool covered(const kmaskedit_rect *rects, size_t count, int x, int y)
 {
     for (size_t i = 0u; i < count; i++) {
@@ -767,6 +934,9 @@ main(void)
 {
     static const test_case tests[] = {
         {"the pointer and the picture agree", test_pointer_matches_picture},
+        {"the paint matches the map", test_paint_matches_the_map},
+        {"a clipped compose matches the full one",
+         test_a_clipped_compose_matches_the_full_one},
         {"damage never misses a changed pixel",
          test_damage_never_misses_a_pixel},
         {"compose stays inside its view", test_compose_stays_inside_its_view},

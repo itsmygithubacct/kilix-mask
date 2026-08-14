@@ -455,6 +455,89 @@ test_import_reconciles_a_cell(void)
     return true;
 }
 
+/*
+ * The reconciliation rule, restated pixel by pixel: count what falls in a
+ * cell, the commonest non-zero value wins, ties keep the lowest id.  The
+ * library may count however it likes, but against any input - edge cells
+ * the image only partly covers included - it has to land on the same
+ * winner this naive count does.
+ */
+static uint8_t naive_winner(const uint8_t *values, int source_w,
+                            int source_h, int cell, int cx, int cy)
+{
+    size_t counts[256] = {0u};
+    unsigned best = 0u;
+    size_t best_count = 0u;
+    const int x1 = (cx + 1) * cell < source_w ? (cx + 1) * cell : source_w;
+    const int y1 = (cy + 1) * cell < source_h ? (cy + 1) * cell : source_h;
+
+    for (int y = cy * cell; y < y1; y++) {
+        for (int x = cx * cell; x < x1; x++) {
+            counts[values[(size_t)y * (size_t)source_w + (size_t)x]]++;
+        }
+    }
+    for (unsigned region = 1u; region <= 255u; region++) {
+        if (counts[region] > best_count) {
+            best_count = counts[region];
+            best = region;
+        }
+    }
+    return (uint8_t)best;
+}
+
+static bool
+test_import_matches_a_naive_count(void)
+{
+    static const struct { int w; int h; int cell; } shapes[] = {
+        {37, 23, 5},   /* the last row and column of cells run past the
+                        * image, so their count covers fewer pixels */
+        {64, 48, 4},
+        {33, 21, 2}
+    };
+    unsigned local_seed = 31u;
+
+    for (size_t s = 0u; s < sizeof(shapes) / sizeof(shapes[0]); s++) {
+        const int w = shapes[s].w;
+        const int h = shapes[s].h;
+        kmask *mask = NULL;
+        uint8_t *values = malloc((size_t)w * (size_t)h);
+
+        CHECK(values != NULL);
+        for (size_t i = 0u; i < (size_t)w * (size_t)h; i++) {
+            local_seed = local_seed * 1103515245u + 12345u;
+            /* Mostly small ids with runs of zeros, plus occasional ids
+             * from the top of the range, and enough repetition that many
+             * cells contain genuine ties. */
+            switch ((local_seed >> 16) % 6u) {
+            case 0u: values[i] = 0u; break;
+            case 1u: values[i] = 200u; break;
+            case 2u: values[i] = 255u; break;
+            default: values[i] = (uint8_t)(1u + (local_seed >> 16) % 3u);
+            }
+        }
+        CHECK(kmask_create(&mask, w, h, shapes[s].cell));
+        CHECK(kmask_import(mask, values, (size_t)w * (size_t)h));
+        for (int cy = 0; cy < kmask_grid_height(mask); cy++) {
+            for (int cx = 0; cx < kmask_grid_width(mask); cx++) {
+                const uint8_t expected =
+                    naive_winner(values, w, h, shapes[s].cell, cx, cy);
+
+                if (kmask_get(mask, cx, cy) != expected) {
+                    (void)fprintf(stderr,
+                                  "  %dx%d cell %d: cell %d,%d holds %u, "
+                                  "the count says %u\n",
+                                  w, h, shapes[s].cell, cx, cy,
+                                  kmask_get(mask, cx, cy), expected);
+                    return false;
+                }
+            }
+        }
+        kmask_free(mask);
+        free(values);
+    }
+    return true;
+}
+
 typedef bool (*test_function)(void);
 
 typedef struct test_case {
@@ -473,6 +556,7 @@ main(void)
         {"expansion polarity", test_expansion_polarity},
         {"import round trips", test_import_round_trips},
         {"import reconciles a cell", test_import_reconciles_a_cell},
+        {"import matches a naive count", test_import_matches_a_naive_count},
         {"round trip preserves everything",
          test_round_trip_preserves_everything},
         {"output is a valid png", test_output_is_a_valid_png},
