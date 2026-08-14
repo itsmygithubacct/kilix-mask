@@ -145,7 +145,11 @@ void kmask_set(kmask *mask, int cx, int cy, uint8_t region)
 
 uint8_t kmask_get_at(const kmask *mask, int x, int y)
 {
-    if (mask == NULL) {
+    /* The sign check has to happen before the division: truncation maps
+     * the coordinates just left of and above the image onto cell 0, so
+     * without it a probe one pixel off the edge reads the edge cell as if
+     * it were its own. */
+    if (mask == NULL || x < 0 || y < 0) {
         return 0u;
     }
     return kmask_get(mask, x / mask->cell, y / mask->cell);

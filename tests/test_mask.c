@@ -78,6 +78,17 @@ test_painting_in_both_coordinate_spaces(void)
     CHECK(kmask_get(mask, -1, 0) == 0u);
     CHECK(kmask_get(mask, 999, 999) == 0u);
 
+    /* Reads just left of and above the image are out of range too, even
+     * though truncating division would land them in cell 0.  A sprite
+     * probing x-1 at the left edge must see nothing, not the edge cell. */
+    kmask_set(mask, 0, 0, 8u);
+    CHECK(kmask_get_at(mask, -3, -3) == 0u);
+    CHECK(kmask_get_at(mask, -3, 5) == 0u);
+    CHECK(kmask_get_at(mask, 5, -3) == 0u);
+    CHECK(kmask_get_at(mask, -1, 0) == 0u);
+    CHECK(kmask_get_at(mask, 5, 5) == 8u);
+    kmask_set(mask, 0, 0, 0u);
+
     /* A rect covers every cell it touches, not only whole ones. */
     kmask_fill_rect(mask, 12, 12, 25, 25, 3u);
     CHECK(kmask_get(mask, 1, 1) == 3u);
