@@ -61,6 +61,8 @@ static size_t sweep(const uint8_t *cells, int width, int height,
 {
     cover_state state;
     size_t count = 0u;
+    int seek_outer = 0;
+    int seek_inner = 0;
 
     state.remaining = malloc((size_t)width * (size_t)height);
     if (state.remaining == NULL) {
@@ -80,10 +82,19 @@ static size_t sweep(const uint8_t *cells, int width, int height,
 
         /* Lowest cell in sweep order: row-major scans rows first,
          * column-major columns, and that choice is the whole difference
-         * between the two results. */
+         * between the two results.
+         *
+         * The seek resumes where the last one ended rather than starting
+         * over, which is safe because the first remaining cell can only
+         * move forward: every cell a rectangle clears sits at or after
+         * the cell it grew from, in this sweep's order.  Restarting from
+         * the origin instead re-walks the cleared ground once per
+         * rectangle, which on a per-pixel mask with hundreds of holes is
+         * the difference between milliseconds and a second. */
         if (column_major) {
-            for (int x = 0; x < width && cx < 0; x++) {
-                for (int y = 0; y < height; y++) {
+            for (int x = seek_outer; x < width && cx < 0; x++) {
+                for (int y = x == seek_outer ? seek_inner : 0; y < height;
+                     y++) {
                     if (taken(&state, x, y)) {
                         cx = x;
                         cy = y;
@@ -92,8 +103,9 @@ static size_t sweep(const uint8_t *cells, int width, int height,
                 }
             }
         } else {
-            for (int y = 0; y < height && cx < 0; y++) {
-                for (int x = 0; x < width; x++) {
+            for (int y = seek_outer; y < height && cx < 0; y++) {
+                for (int x = y == seek_outer ? seek_inner : 0; x < width;
+                     x++) {
                     if (taken(&state, x, y)) {
                         cx = x;
                         cy = y;
@@ -105,6 +117,8 @@ static size_t sweep(const uint8_t *cells, int width, int height,
         if (cx < 0) {
             break;
         }
+        seek_outer = column_major ? cx : cy;
+        seek_inner = column_major ? cy : cx;
 
         if (column_major) {
             while (taken(&state, cx, cy + rect_h)) {
