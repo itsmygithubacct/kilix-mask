@@ -446,15 +446,20 @@ bool kmask_expand(const kmask *mask, uint8_t *out, size_t size)
 }
 
 /*
- * One pass over the source, tallying per cell, then one pass to pick a
- * winner.  Counting into a 256-wide tally per cell rather than sorting
- * keeps this linear in pixels, which matters: the case it exists for is
- * a million of them.
+ * One visit per pixel, tallying a cell's block at a time into a single
+ * 256-wide count that lives on the stack.  A tally for every cell at
+ * once would be the obvious shape, but it costs 512 bytes per cell
+ * whether or not the cell has anything in it - a quarter of a gigabyte
+ * of zeroed memory for a 2 MB per-pixel source at cell 2 - and then a
+ * winner pass over all 255 counters of every cell.  Per block, the tally
+ * is one array, only the values actually seen are counted, compared and
+ * cleared, and the result is identical: counts do not depend on the
+ * order pixels are visited in.
  */
 bool kmask_import(kmask *mask, const uint8_t *values, size_t size)
 {
-    uint16_t (*tally)[KMASK_REGION_MAX + 1];
-    size_t cells;
+    uint16_t tally[KMASK_REGION_MAX + 1] = {0u};
+    uint8_t seen[KMASK_REGION_MAX];
 
     if (mask == NULL || values == NULL) {
         return false;
@@ -462,7 +467,6 @@ bool kmask_import(kmask *mask, const uint8_t *values, size_t size)
     if (size != (size_t)mask->source_width * (size_t)mask->source_height) {
         return false;
     }
-    cells = (size_t)mask->grid_width * (size_t)mask->grid_height;
     if (mask->cell == 1) {
         /* Every pixel is its own cell, so there is nothing to reconcile
          * and nothing to count. */
@@ -473,42 +477,54 @@ bool kmask_import(kmask *mask, const uint8_t *values, size_t size)
         }
         return true;
     }
-    tally = calloc(cells, sizeof(*tally));
-    if (tally == NULL) {
-        return false;
-    }
-    for (int y = 0; y < mask->source_height; y++) {
-        const size_t row = (size_t)(y / mask->cell) * (size_t)mask->grid_width;
-        const uint8_t *source = values + (size_t)y * (size_t)mask->source_width;
+    for (int cy = 0; cy < mask->grid_height; cy++) {
+        const int y0 = cy * mask->cell;
+        const int y1 = y0 + mask->cell < mask->source_height
+                           ? y0 + mask->cell : mask->source_height;
 
-        for (int x = 0; x < mask->source_width; x++) {
-            const uint8_t value = source[x];
+        for (int cx = 0; cx < mask->grid_width; cx++) {
+            const int x0 = cx * mask->cell;
+            const int x1 = x0 + mask->cell < mask->source_width
+                               ? x0 + mask->cell : mask->source_width;
+            size_t seen_count = 0u;
+            unsigned best = 0u;
+            uint16_t best_count = 0u;
 
-            if (value != 0u) {
-                /* Saturating, so a cell larger than 65535 pixels cannot
-                 * wrap a count back down past a rival. */
-                uint16_t *slot = &tally[row + (size_t)(x / mask->cell)][value];
+            for (int y = y0; y < y1; y++) {
+                const uint8_t *source =
+                    values + (size_t)y * (size_t)mask->source_width;
 
-                if (*slot < UINT16_MAX) {
-                    (*slot)++;
+                for (int x = x0; x < x1; x++) {
+                    const uint8_t value = source[x];
+
+                    if (value != 0u) {
+                        if (tally[value] == 0u) {
+                            seen[seen_count++] = value;
+                        }
+                        /* Saturating, so a cell larger than 65535 pixels
+                         * cannot wrap a count back down past a rival. */
+                        if (tally[value] < UINT16_MAX) {
+                            tally[value]++;
+                        }
+                    }
                 }
             }
-        }
-    }
-    for (size_t cell = 0u; cell < cells; cell++) {
-        unsigned best = 0u;
-        uint16_t best_count = 0u;
+            for (size_t i = 0u; i < seen_count; i++) {
+                const uint8_t value = seen[i];
 
-        for (unsigned region = 1u; region <= KMASK_REGION_MAX; region++) {
-            if (tally[cell][region] > best_count) {
-                best_count = tally[cell][region];
-                best = region;   /* strictly greater, so ties keep the
-                                  * lower id and the result is stable */
+                /* The commonest wins and a tie keeps the lower id, same
+                 * as scanning all ids upwards on strictly-greater. */
+                if (tally[value] > best_count ||
+                    (tally[value] == best_count && value < best)) {
+                    best_count = tally[value];
+                    best = value;
+                }
+                tally[value] = 0u;
             }
+            mask->cells[(size_t)cy * (size_t)mask->grid_width + (size_t)cx] =
+                (uint8_t)best;
         }
-        mask->cells[cell] = (uint8_t)best;
     }
-    free(tally);
     return true;
 }
 
