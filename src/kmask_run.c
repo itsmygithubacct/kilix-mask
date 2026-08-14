@@ -325,6 +325,20 @@ static bool handle_key(app *state, const kittykb_event *event, int view_w,
     return true;
 }
 
+static void draw_status(sr_canvas *frame, const app *state, int width,
+                        int view_h)
+{
+    const kmask_ui_state chrome = {
+        state->path, state->message, state->rect_count, state->rect_known,
+        state->rect_known &&
+            (kmaskedit_revision(state->editor) != state->rect_revision ||
+             kmaskedit_get_region(state->editor) != state->rect_region),
+        state->rect_cap
+    };
+
+    kmask_ui_status(frame, view_h, width, state->editor, &chrome);
+}
+
 static void handle_mouse(app *state, const kittyin_mouse_event *mouse,
                          int origin_x, int origin_y)
 {
@@ -498,32 +512,58 @@ int kmask_run(kmaskedit *editor, kmask *mask, const char *path, int rect_cap,
             if (count == 0u && !state.chrome_dirty && !needs_full) {
                 continue;
             }
-            kmaskedit_compose(editor, &frame, 0, 0);
-            kmask_ui_baselines(&frame, editor, width, view_h);
-            if (state.show_marks) {
-                kmask_marks_draw(&frame, editor, state.marks, width, view_h,
-                                 state.show_labels);
+            if (needs_full || state.help) {
+                /* The whole frame really did change: first paint, resize,
+                 * or the help panel over everything. */
+                kmaskedit_compose(editor, &frame, 0, 0);
+                kmask_ui_baselines(&frame, editor, width, view_h);
+                if (state.show_marks) {
+                    kmask_marks_draw(&frame, editor, state.marks, width,
+                                     view_h, state.show_labels);
+                }
+                draw_status(&frame, &state, width, view_h);
+                if (state.help) {
+                    kmask_ui_help(&frame, width, view_h);
+                }
+                state.chrome_dirty = false;
+                if (!sr_pack_rgba(&frame, rgba,
+                                  (size_t)width * (size_t)height * 4u)) {
+                    status = 1;
+                    break;
+                }
+                if (!kittyts_present(&session, rgba, width, height)) {
+                    status = 1;
+                    break;
+                }
+                needs_full = false;
+                continue;
             }
-            {
-                const kmask_ui_state chrome = {
-                    path, state.message, state.rect_count, state.rect_known,
-                    state.rect_known &&
-                        (kmaskedit_revision(editor) != state.rect_revision ||
-                         kmaskedit_get_region(editor) != state.rect_region),
-                    state.rect_cap
-                };
-
-                kmask_ui_status(&frame, view_h, width, editor, &chrome);
+            /*
+             * Otherwise redraw only under the damage.  A hover move
+             * damages a few dozen pixels of cursor; composing and packing
+             * the whole frame for it costs tens of milliseconds at 1080p,
+             * most of the poll interval, for pixels that did not change.
+             * Every layer is drawn per rectangle because every layer
+             * clips: the compositor honours the canvas clip and the
+             * chrome is soft-raster primitives, so the pixels inside each
+             * rectangle come out identical to a full redraw.
+             */
+            for (size_t i = 0u; i < count; i++) {
+                sr_canvas_set_clip(&frame, rects[i].x0, rects[i].y0,
+                                   rects[i].x1 - rects[i].x0,
+                                   rects[i].y1 - rects[i].y0);
+                kmaskedit_compose(editor, &frame, 0, 0);
+                kmask_ui_baselines(&frame, editor, width, view_h);
+                if (state.show_marks) {
+                    kmask_marks_draw(&frame, editor, state.marks, width,
+                                     view_h, state.show_labels);
+                }
             }
-            if (state.help) {
-                kmask_ui_help(&frame, width, view_h);
-            }
-            if (!sr_pack_rgba(&frame, rgba,
-                              (size_t)width * (size_t)height * 4u)) {
-                status = 1;
-                break;
-            }
+            sr_canvas_reset_clip(&frame);
             if (state.chrome_dirty) {
+                /* The strip redraws only when something it reports moved;
+                 * anything that changes it sets the flag. */
+                draw_status(&frame, &state, width, view_h);
                 rects[count].x0 = 0;
                 rects[count].y0 = view_h;
                 rects[count].x1 = width;
@@ -531,13 +571,37 @@ int kmask_run(kmaskedit *editor, kmask *mask, const char *path, int rect_cap,
                 count++;
                 state.chrome_dirty = false;
             }
-            if (needs_full || state.help) {
-                if (!kittyts_present(&session, rgba, width, height)) {
-                    status = 1;
-                    break;
+            /* Pack only the damaged rows.  The packed buffer keeps the
+             * frame's full layout, so a row slice can be converted in
+             * place and the patch rectangles index into it unchanged;
+             * rows outside every patch are never read. */
+            {
+                int pack_y0 = height;
+                int pack_y1 = 0;
+
+                for (size_t i = 0u; i < count; i++) {
+                    const int y0 = rects[i].y0 < 0 ? 0 : rects[i].y0;
+                    const int y1 = rects[i].y1 > height ? height
+                                                        : rects[i].y1;
+
+                    if (y0 < pack_y0) { pack_y0 = y0; }
+                    if (y1 > pack_y1) { pack_y1 = y1; }
                 }
-                needs_full = false;
-                continue;
+                if (pack_y1 > pack_y0) {
+                    sr_canvas span;
+
+                    sr_canvas_wrap(&span,
+                                   frame.px + (size_t)pack_y0 * (size_t)width,
+                                   width, pack_y1 - pack_y0);
+                    if (!sr_pack_rgba(&span,
+                                      rgba + (size_t)pack_y0 *
+                                                 (size_t)width * 4u,
+                                      (size_t)width *
+                                          (size_t)(pack_y1 - pack_y0) * 4u)) {
+                        status = 1;
+                        break;
+                    }
+                }
             }
             /* Copied field by field rather than cast.  The two structs
              * hold the same four ints in the same order, but relying on
