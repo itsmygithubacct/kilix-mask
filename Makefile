@@ -61,7 +61,9 @@ VENDOR_CFLAGS := $(CFLAGS) -Wno-conversion -Wno-sign-conversion
 TESTS := $(BUILD_DIR)/test-mask $(BUILD_DIR)/test-rects \
 	$(BUILD_DIR)/test-edit $(BUILD_DIR)/test-image $(BUILD_DIR)/test-marks
 
-.PHONY: all test sanitize install clean
+BENCH := $(BUILD_DIR)/bench-rects
+
+.PHONY: all test benchmark sanitize install clean
 
 all: $(STATIC_LIB) $(SHARED_LIB) $(EDIT_LIB) $(COMMAND)
 
@@ -135,17 +137,28 @@ $(BUILD_DIR)/test-image: tests/test_image.c tests/image_fixtures.h \
 	$(CC) $(CPPFLAGS) $(EDIT_CPPFLAGS) -Itests $(CFLAGS) $(LDFLAGS) $< \
 		$(EDIT_LIB) $(STATIC_LIB) $(SR_OBJECT) $(LDLIBS) $(EDIT_LDLIBS) -o $@
 
+$(BENCH): benchmarks/bench_rects.c $(STATIC_LIB) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $< $(STATIC_LIB) $(LDLIBS) -o $@
+
+benchmark: $(BENCH)
+	$(BENCH)
+
 # The command's own --selftest runs here too.  It duplicates a little of
 # what the suites cover, deliberately: it is the only check that the
 # assembled binary works, and it is what can be run on a machine that has
-# the tool installed but not this source tree.
-test: $(TESTS) $(COMMAND)
+# the tool installed but not this source tree.  The benchmark runs with
+# the suites because its floor is a functional contract: a decomposition
+# that slows down by orders of magnitude does not fail anything at run
+# time, it just quietly stops the rectangle count refreshing.
+test: $(TESTS) $(COMMAND) $(BENCH)
 	@set -e; for binary in $(TESTS); do \
 		printf '\n== %s ==\n' "$$binary"; \
 		"$$binary"; \
 	done; \
 	printf '\n== %s --selftest ==\n' "$(COMMAND)"; \
 	$(COMMAND) --selftest; \
+	printf '\n== %s ==\n' "$(BENCH)"; \
+	$(BENCH); \
 	printf '\nall test suites passed\n'
 
 sanitize: CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer

@@ -270,16 +270,20 @@ as a rejection afterwards — kilix-land-desktop caps a room at 64 obstacles and
 refuses to write one past it. Pass `--cap 64` and the count is flagged once it
 goes over; without a cap it is reported without a verdict.
 
-It is recomputed automatically, but only while that is free. Measured:
+It is recomputed automatically, but only while that is free. Measured, by
+`make benchmark` — `benchmarks/bench_rects.c`, which `make test` also runs so
+that a decomposition slowing down by orders of magnitude fails a build instead
+of quietly going stale on screen:
 
 | mask | grid | decompose |
 | --- | --- | --- |
-| land-desktop walkable, cell 6 | 214×120 | **1–3 ms** |
-| walk-behind, one cell per pixel | 1280×720 | **27–71 ms** |
-| camera mask 1080p, per pixel | 1920×1080 | **148 ms** |
+| land-desktop walkable, cell 6 | 214×120 | **under 1 ms** |
+| walk-behind, one cell per pixel | 1280×720 | **8–13 ms** |
+| camera mask 1080p, per pixel | 1920×1080 | **18–24 ms** |
 
-So the case the budget exists for is free, and the per-pixel case — which has no
-obstacle budget anyway — would stall visibly after every stroke. Rather than
+So the case the budget exists for is free, and even per-pixel masks sit within
+a stroke's pause now that the cover resumes its seek instead of restarting at
+the origin for every rectangle. Machines and masks still vary, so rather than
 hard-code a grid-size cutoff calibrated on one machine, the first count that
 overruns an 8 ms budget switches the refresh off for the session; the number
 then carries a `?` meaning it describes an older shape, and `n` asks for a fresh

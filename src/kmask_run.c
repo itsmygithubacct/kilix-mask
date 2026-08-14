@@ -29,11 +29,11 @@
  * How long a decomposition may take before it stops being recomputed by
  * itself.
  *
- * Measured, not guessed: a land-desktop walkable map at cell 6 is a
- * 214x120 grid and decomposes in 1-3 ms, while the same picture at one
- * cell per pixel is 1280x720 and takes 27-71 ms - and a 1080p per-pixel
- * mask 148 ms.  Recomputing that after every stroke would be a visible
- * stall on exactly the masks that have no obstacle budget anyway.
+ * Measured, not guessed - benchmarks/bench_rects.c is where the numbers
+ * come from and what keeps them honest: a land-desktop walkable map at
+ * cell 6 is a 214x120 grid and decomposes in well under a millisecond,
+ * and even a 1080p per-pixel mask is tens of milliseconds now that the
+ * cover resumes its seek.
  *
  * A budget rather than a grid-size cutoff, because the cutoff would have
  * been calibrated on one machine and this fleet runs the same tools on
