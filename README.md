@@ -278,8 +278,8 @@ of quietly going stale on screen:
 | mask | grid | decompose |
 | --- | --- | --- |
 | land-desktop walkable, cell 6 | 214×120 | **under 1 ms** |
-| walk-behind, one cell per pixel | 1280×720 | **8–13 ms** |
-| camera mask 1080p, per pixel | 1920×1080 | **18–24 ms** |
+| walk-behind, one cell per pixel | 1280×720 | **5–8 ms** |
+| camera mask 1080p, per pixel | 1920×1080 | **10–14 ms** |
 
 So the case the budget exists for is free, and even per-pixel masks sit within
 a stroke's pause now that the cover resumes its seek instead of restarting at
