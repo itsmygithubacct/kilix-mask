@@ -910,6 +910,7 @@ bool kmask_decode(kmask **out, const uint8_t *data, size_t size)
     buffer idat = {NULL, 0u, 0u, false};
     uint8_t *raw = NULL;
     uLongf raw_length;
+    bool have_header = false;
     bool ok = false;
 
     if (out == NULL || data == NULL) {
@@ -928,7 +929,14 @@ bool kmask_decode(kmask **out, const uint8_t *data, size_t size)
         if (length > size - at - 12u) {
             goto done;
         }
-        if (memcmp(type, "IHDR", 4u) == 0 && length == 13u) {
+        if (memcmp(type, "IHDR", 4u) == 0) {
+            /* Exactly one header, and it opens the file.  A second IHDR
+             * would move the geometry after the cells were already sized
+             * to the first, so every later write would run off the end of
+             * the allocation. */
+            if (have_header || length != 13u) {
+                goto done;
+            }
             grid_width = (int)read_u32(payload);
             grid_height = (int)read_u32(payload + 4u);
             /* Only what this module writes; anything else is somebody
@@ -939,6 +947,11 @@ bool kmask_decode(kmask **out, const uint8_t *data, size_t size)
             if (grid_width <= 0 || grid_height <= 0) {
                 goto done;
             }
+            have_header = true;
+        } else if (!have_header) {
+            /* Nothing may precede the header: the geometry has to be known
+             * before any chunk that leans on it is trusted. */
+            goto done;
         } else if (memcmp(type, "tEXt", 4u) == 0) {
             const size_t keyword = sizeof(TEXT_KEYWORD) - 1u;
 

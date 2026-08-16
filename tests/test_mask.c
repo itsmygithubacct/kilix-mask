@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <zlib.h>
 
 #define CHECK(condition)                                                      \
     do {                                                                      \
@@ -366,6 +367,194 @@ test_decode_rejects_what_it_should(void)
     return true;
 }
 
+/* The decoder never verifies chunk CRCs, so a hand-built chunk can carry
+ * any four trailing bytes.  These helpers stitch a malformed PNG together
+ * one chunk at a time with a zero CRC. */
+static void
+put_u32_be(uint8_t *at, uint32_t value)
+{
+    at[0] = (uint8_t)(value >> 24);
+    at[1] = (uint8_t)(value >> 16);
+    at[2] = (uint8_t)(value >> 8);
+    at[3] = (uint8_t)value;
+}
+
+static size_t
+emit_chunk(uint8_t *out, const char *type, const uint8_t *payload,
+           size_t length)
+{
+    put_u32_be(out, (uint32_t)length);
+    (void)memcpy(out + 4u, type, 4u);
+    if (length > 0u) {
+        (void)memcpy(out + 8u, payload, length);
+    }
+    (void)memset(out + 8u + length, 0, 4u);   /* CRC the decoder ignores */
+    return 12u + length;
+}
+
+static size_t
+emit_ihdr(uint8_t *out, uint32_t width, uint32_t height)
+{
+    uint8_t payload[13];
+
+    put_u32_be(payload, width);
+    put_u32_be(payload + 4u, height);
+    payload[8] = 8u;    /* bit depth */
+    payload[9] = 3u;    /* palette colour type */
+    payload[10] = 0u;   /* compression */
+    payload[11] = 0u;   /* filter */
+    payload[12] = 0u;   /* no interlace */
+    return emit_chunk(out, "IHDR", payload, sizeof(payload));
+}
+
+/* The byte just past the first chunk of the given type in a real encoding. */
+static size_t
+after_chunk(const uint8_t *data, size_t size, const char *type)
+{
+    size_t at = 8u;
+
+    while (at + 12u <= size) {
+        const uint32_t length =
+            ((uint32_t)data[at] << 24) | ((uint32_t)data[at + 1] << 16) |
+            ((uint32_t)data[at + 2] << 8) | (uint32_t)data[at + 3];
+
+        if (memcmp(data + at + 4u, type, 4u) == 0) {
+            return at + 12u + length;
+        }
+        at += 12u + length;
+    }
+    return 0u;
+}
+
+/* A second IHDR after the metadata, enlarging the grid.  On the old decoder
+ * the geometry was reassigned after the cells had already been sized to the
+ * first header, and the copy loop wrote whole scanlines past the end of the
+ * allocation.  The fixed decoder refuses the file outright. */
+static bool
+test_decode_rejects_a_second_header(void)
+{
+    enum { BIG = 40, SCAN = (BIG + 1) * BIG };
+    kmask *mask = NULL;
+    kmask *back = NULL;
+    uint8_t *encoded = NULL;
+    size_t size = 0u;
+    size_t prefix;
+    size_t at;
+    uint8_t *crafted;
+    uint8_t scan[SCAN];
+    uLong bound;
+    uLongf packed_len;
+    uint8_t *packed;
+
+    /* A genuine little 8x8-cell mask: real IHDR, PLTE, tEXt and IDAT.  Its
+     * cell buffer is 64 bytes, far short of the enlarged grid below. */
+    CHECK(kmask_create(&mask, 8, 8, 1));
+    kmask_set_at(mask, 0, 0, 1u);
+    CHECK(kmask_encode(mask, &encoded, &size));
+
+    prefix = after_chunk(encoded, size, "tEXt");
+    CHECK(prefix > 0u);
+
+    /* Image data sized to the second, larger header: filter byte 0 then a
+     * full scanline of palette index 0, for every enlarged row. */
+    (void)memset(scan, 0, sizeof(scan));
+    bound = compressBound((uLong)sizeof(scan));
+    packed = malloc((size_t)bound);
+    CHECK(packed != NULL);
+    packed_len = (uLongf)bound;
+    CHECK(compress(packed, &packed_len, scan, (uLong)sizeof(scan)) == Z_OK);
+
+    crafted = malloc(prefix + (12u + 13u) + (12u + (size_t)packed_len) + 12u);
+    CHECK(crafted != NULL);
+    (void)memcpy(crafted, encoded, prefix);
+    at = prefix;
+    at += emit_ihdr(crafted + at, BIG, BIG);
+    at += emit_chunk(crafted + at, "IDAT", packed, (size_t)packed_len);
+    at += emit_chunk(crafted + at, "IEND", NULL, 0u);
+
+    CHECK(!kmask_decode(&back, crafted, at));
+    CHECK(back == NULL);
+
+    free(packed);
+    free(crafted);
+    free(encoded);
+    kmask_free(mask);
+    return true;
+}
+
+/* A second IHDR that shrinks the grid is the same contract violation: the
+ * geometry must not move once the cells are sized.  It is rejected too. */
+static bool
+test_decode_rejects_a_shrinking_second_header(void)
+{
+    kmask *mask = NULL;
+    kmask *back = NULL;
+    uint8_t *encoded = NULL;
+    size_t size = 0u;
+    size_t prefix;
+    size_t at;
+    uint8_t *crafted;
+
+    CHECK(kmask_create(&mask, 40, 40, 1));
+    kmask_set_at(mask, 0, 0, 1u);
+    CHECK(kmask_encode(mask, &encoded, &size));
+
+    /* Keep the whole genuine file and splice one smaller header in after
+     * the metadata, before the real image data. */
+    prefix = after_chunk(encoded, size, "tEXt");
+    CHECK(prefix > 0u);
+
+    crafted = malloc(size + (12u + 13u));
+    CHECK(crafted != NULL);
+    (void)memcpy(crafted, encoded, prefix);
+    at = prefix;
+    at += emit_ihdr(crafted + at, 8u, 8u);
+    (void)memcpy(crafted + at, encoded + prefix, size - prefix);
+    at += size - prefix;
+
+    CHECK(!kmask_decode(&back, crafted, at));
+    CHECK(back == NULL);
+
+    free(crafted);
+    free(encoded);
+    kmask_free(mask);
+    return true;
+}
+
+/* The header has to come first.  A chunk ahead of IHDR means the geometry
+ * would be leaned on before it was known, so the file is refused. */
+static bool
+test_decode_rejects_a_header_that_is_not_first(void)
+{
+    kmask *mask = NULL;
+    kmask *back = NULL;
+    uint8_t *encoded = NULL;
+    size_t size = 0u;
+    uint8_t *crafted;
+    size_t at;
+
+    CHECK(kmask_create(&mask, 16, 16, 1));
+    kmask_set_at(mask, 0, 0, 1u);
+    CHECK(kmask_encode(mask, &encoded, &size));
+
+    /* Signature, then a stray chunk, then the genuine stream from IHDR on. */
+    crafted = malloc(size + (12u + 4u));
+    CHECK(crafted != NULL);
+    (void)memcpy(crafted, encoded, 8u);
+    at = 8u;
+    at += emit_chunk(crafted + at, "zzZz", (const uint8_t *)"junk", 4u);
+    (void)memcpy(crafted + at, encoded + 8u, size - 8u);
+    at += size - 8u;
+
+    CHECK(!kmask_decode(&back, crafted, at));
+    CHECK(back == NULL);
+
+    free(crafted);
+    free(encoded);
+    kmask_free(mask);
+    return true;
+}
+
 static bool
 test_file_round_trip(void)
 {
@@ -581,6 +770,12 @@ main(void)
          test_round_trip_preserves_everything},
         {"output is a valid png", test_output_is_a_valid_png},
         {"decode rejects what it should", test_decode_rejects_what_it_should},
+        {"decode rejects a second header",
+         test_decode_rejects_a_second_header},
+        {"decode rejects a shrinking second header",
+         test_decode_rejects_a_shrinking_second_header},
+        {"decode rejects a header that is not first",
+         test_decode_rejects_a_header_that_is_not_first},
         {"file round trip", test_file_round_trip}
     };
     size_t passed = 0u;
